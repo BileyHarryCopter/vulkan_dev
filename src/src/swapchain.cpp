@@ -21,18 +21,16 @@ namespace VKSwapchain
 
     Swapchain::Swapchain(VKWindow::Window& window, VKDevice::Device& device,
                          std::shared_ptr<Swapchain> previous) : 
-                         device_{device}, surface_{device.get_surface()}
+                         device_{device}, surface_{device.get_surface()}, oldswapchain_{previous}
     {
         createSwapChain(window);
-
-        //  the problem =()
-
         createImageViews();
         createRenderPass();
         createDepthResources();
         createFramebuffers();
         createSyncObjects();
-        oldswapchain_ = nullptr;
+
+        oldswapchain_ = nullptr;    //  because of previous is shared_ptr
     }
 
     Swapchain::~Swapchain()
@@ -236,13 +234,12 @@ namespace VKSwapchain
             createInfo.pQueueFamilyIndices   =                    nullptr;  
         }
 
-        createInfo.preTransform   = swapChainSupport.capabilities_.currentTransform;
-        createInfo.compositeAlpha =               VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        createInfo.presentMode    =                                     presentMode;
-        createInfo.clipped        =                                         VK_TRUE;
-        createInfo.oldSwapchain   =                                  VK_NULL_HANDLE;
+        createInfo.preTransform   =                            swapChainSupport.capabilities_.currentTransform;
+        createInfo.compositeAlpha =                                          VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        createInfo.presentMode    =                                                                presentMode;
+        createInfo.clipped        =                                                                    VK_TRUE;
+        createInfo.oldSwapchain   = oldswapchain_ == nullptr ? VK_NULL_HANDLE : oldswapchain_->get_swapchain();
 
-        std::cout << vkCreateSwapchainKHR(device_.get_logic(), &createInfo, nullptr, &swapchain_);
         if (vkCreateSwapchainKHR(device_.get_logic(), &createInfo, nullptr, &swapchain_) != VK_SUCCESS)
             throw std::runtime_error("failed to create swap chain!");
 

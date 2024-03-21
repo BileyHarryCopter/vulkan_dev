@@ -8,8 +8,6 @@ namespace VKRenderer
         swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_);
         recreateSwapChain();
 
-        //  the problem =()
-
         createCommandBuffers();
     }
 
@@ -33,15 +31,9 @@ namespace VKRenderer
         vkDeviceWaitIdle(device_.get_logic());
 
         if (swapchain_->get_swapchain() == nullptr)
-        {
-            std::cout << "NEW\n";
             swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_);
-        }
         else
-        {
-            std::cout << "OLD\n";
             swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_, std::move(swapchain_));
-        }
 
     }
 

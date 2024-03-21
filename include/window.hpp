@@ -9,8 +9,8 @@
 namespace VKWindow
 {
 
-constexpr std::size_t DEFAULT_WIDTH         = 1400;
-constexpr std::size_t DEFAULT_HEIGHT        =  900;
+constexpr std::size_t DEFAULT_WIDTH         = 1280;
+constexpr std::size_t DEFAULT_HEIGHT        =  800;
 const     std::string DEFAULT_WINDOW_NAME   = "VK";
 
 class Window final

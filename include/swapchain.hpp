@@ -27,7 +27,8 @@ class Swapchain final
     VKDevice::Device&                             device_;
     
     VkSwapchainKHR                             swapchain_;
-    VkSwapchainKHR                          oldswapchain_;
+    std::shared_ptr<Swapchain>              oldswapchain_;  //  for swapchain recreation
+
     VkRenderPass                              renderpass_;
     
     std::vector<VkImage>                 swapchainimages_;
