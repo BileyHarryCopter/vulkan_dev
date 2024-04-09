@@ -16,6 +16,7 @@ namespace VKEngine
 
     void App::run()
     {
+        //  creating uniform buffers for global data
         std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>> ubobuffs (VKSwapchain::MAX_FRAMES_IN_FLIGHT);
         for (int i = 0; i < ubobuffs.size(); ++i)
         {
@@ -24,14 +25,24 @@ namespace VKEngine
             ubobuffs[i]->map();
         }
 
-        auto globalsetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1)
-                                                                                   .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
 
+        //  creating layout for GLOBAL set and it respectively
+        auto globalsetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1).build();
         std::vector<VkDescriptorSet> globaldescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT);
         for (int i = 0; i < globaldescriptorsets.size(); i++) 
         {
             auto bufferInfo = ubobuffs[i]->descriptorInfo();
 
+            VKDescriptors::DescriptorWriter  (*globalsetlayout, *globalPool).writeBuffer(0, &bufferInfo).build(globaldescriptorsets[i]);
+        }
+
+        
+
+        //  creating layout for OBJECT set and it respectively
+        auto texturesetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
+        std::vector<VkDescriptorSet> texturedescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT);
+        for (int i = 0; i < texturedescriptorsets.size(); i++) 
+        {
             for (auto& obj : objects_)
             {
                 VkDescriptorImageInfo imageInfo{};
@@ -39,12 +50,16 @@ namespace VKEngine
                 imageInfo.imageView   = obj.model_->getimgview();
                 imageInfo.sampler     = obj.model_->getsampler();
 
-                VKDescriptors::DescriptorWriter  (*globalsetlayout, *globalPool).writeBuffer(0, &bufferInfo)
-                                                                                .writeImage (1,  &imageInfo).build(globaldescriptorsets[i]);
+                VKDescriptors::DescriptorWriter  (*texturesetlayout, *globalPool).writeImage(1,  &imageInfo).build(texturedescriptorsets[i]);
             }
         }
 
-        VKRenderSystem::RenderSystem renderSystem{device_, renderer_.getSwapChainRenderPass(), globalsetlayout->getDescriptorSetLayout()};
+
+        auto descriptorSetLayouts = std::vector<VkDescriptorSetLayout> {globalsetlayout->getDescriptorSetLayout(), texturesetlayout->getDescriptorSetLayout()};
+        VKRenderSystem::RenderSystem renderSystem {device_, renderer_.getSwapChainRenderPass(), descriptorSetLayouts};
+
+
+
         VKCamera::Camera camera{};
 
         auto viewerObject =    VKObject::Object::createObject();
@@ -69,11 +84,14 @@ namespace VKEngine
             if (auto commandBuffer = renderer_.beginFrame())
             {
                 int frameindex = renderer_.getframeindex();
-                VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, globaldescriptorsets[frameindex]};
+
+                auto descriptorsets = std::vector<VkDescriptorSet>{globaldescriptorsets[frameindex], texturedescriptorsets[frameindex]};
+                VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
 
                 //  update Ubo
                 GlobalUbo ubo{};
                 ubo.projectionView = camera.getProjection() * camera.getView();
+
                 ubobuffs[frameindex]->writeToBuffer(&ubo);
                 ubobuffs[frameindex]->flush();
 
@@ -92,24 +110,26 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-        std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
-                                                                                                            "../../src/src/assets/viking_room.png");
-        auto obj_viking_room                     =   VKObject::Object::createObject();
-        obj_viking_room.model_                   =                  model_viking_room;
-        obj_viking_room.transform3D_.translation =                 {1.0f, 0.0f, 1.0f};
-        obj_viking_room.transform3D_.scale       =                    glm::vec3{2.0f};
-        obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
+        std::shared_ptr<VKModel::Model> model_shrek       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+                                                                                                            "");
+        auto obj_shrek                     = VKObject::Object::createObject();
+        obj_shrek.model_                   =                      model_shrek;
+        obj_shrek.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
+        obj_shrek.transform3D_.scale       =                glm::vec3{ -2.0f};
 
-        objects_.push_back(std::move(obj_viking_room));
+        objects_.push_back(std::move(obj_shrek));
 
 
-        // std::shared_ptr<VKModel::Model> model_shrek       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj", "");
-        // auto obj_shrek                     = VKObject::Object::createObject();
-        // obj_shrek.model_                   =                      model_shrek;
-        // obj_shrek.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
-        // obj_shrek.transform3D_.scale       =                glm::vec3{ -2.0f};
+        // std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
+        //                                                                                                     "../../src/src/assets/viking_room.png");
+        // auto obj_viking_room                     =   VKObject::Object::createObject();
+        // obj_viking_room.model_                   =                  model_viking_room;
+        // obj_viking_room.transform3D_.translation =                 {1.0f, 0.0f, 1.0f};
+        // obj_viking_room.transform3D_.scale       =                    glm::vec3{2.0f};
+        // obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
 
-        // objects_.push_back(std::move(obj_shrek));
+        // objects_.push_back(std::move(obj_viking_room));
+
 
         // std::shared_ptr<VKModel::Model> model_vase       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/smooth_vase.obj", "");
         // auto obj_vase                     = VKObject::Object::createObject();

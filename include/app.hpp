@@ -31,7 +31,7 @@ class App final
 
     //  oreder matters
     std::unique_ptr<VKDescriptors::DescriptorPool> globalPool {};
-    std::vector<VKObject::Object> objects_;
+    std::vector<VKObject::Object>                       objects_;
 
 public:
     App() : 
@@ -41,8 +41,8 @@ public:
         instance_{window_}, device_{instance_}, renderer_ {window_, device_}
     {
 
-        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets(VKSwapchain::MAX_FRAMES_IN_FLIGHT)
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)
+        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (2 * VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  max count of descriptor SETS which can be allocated in the future 
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();
         loadObjects();
     }

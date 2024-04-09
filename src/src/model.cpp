@@ -179,9 +179,15 @@ namespace VKModel
     void Model::draw(VkCommandBuffer commandbuffer)
     {
         if (hasindexbuffer)
+        {
+            std::cout << " -- Here we are! -- ";
+            std::cout << indexcount_ << std::endl;
             vkCmdDrawIndexed(commandbuffer, indexcount_, 1, 0, 0, 0);
+        }
         else
+        {
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
+        }
     }
 
     void Model::bind(VkCommandBuffer commandbuffer)
