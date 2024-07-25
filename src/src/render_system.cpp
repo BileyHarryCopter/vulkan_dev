@@ -38,6 +38,8 @@ struct SimplePushConstantData
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(SimplePushConstantData);
 
+        std::cout << descriptorSetLayouts.size() << std::endl;
+
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount         = static_cast<uint32_t>(descriptorSetLayouts.size());
@@ -67,7 +69,9 @@ struct SimplePushConstantData
         pipeline_->bind(frameinfo.commandbuffer_);
 
         vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                pipelineLayout_, 0, 2, frameinfo.globaldescriptorsets_.data(), 0, nullptr);
+                                pipelineLayout_, 0, frameinfo.globaldescriptorsets_.size(), frameinfo.globaldescriptorsets_.data(), 0, nullptr);
+
+        std::cout << "size of frameinfo.globaldescriptorsets_ = " << frameinfo.globaldescriptorsets_.size() << std::endl;
 
         for (auto & object : objects)
         {
@@ -81,7 +85,9 @@ struct SimplePushConstantData
                                 0, sizeof(SimplePushConstantData), &push_data);
 
             object.model_ -> bind(frameinfo.commandbuffer_);
+            std::cout << "\nJepka\n";
             object.model_ -> draw(frameinfo.commandbuffer_);        //  here the problem?
+            std::cout << "\nJepka\n";
         }
     }
 

@@ -197,7 +197,9 @@ namespace VKModel
         vkCmdBindVertexBuffers(commandbuffer, 0, 1, buffers, offsets);  //  and here too
 
         if (hasindexbuffer)
+        {
             vkCmdBindIndexBuffer(commandbuffer, indexbuff_->getBuffer(), 0, VK_INDEX_TYPE_UINT32);
+        }
     }
 
     std::vector<VkVertexInputBindingDescription> Model::Vertex::get_binding_descriptions()
@@ -216,6 +218,7 @@ namespace VKModel
         attributeDescriptions.push_back({1, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(Vertex, color)});
         attributeDescriptions.push_back({2, 0, VK_FORMAT_R32G32B32_SFLOAT,   offsetof(Vertex, normal)});
         attributeDescriptions.push_back({3, 0,    VK_FORMAT_R32G32_SFLOAT,       offsetof(Vertex, uv)});
+        attributeDescriptions.push_back({4, 0,         VK_FORMAT_R32_SINT, offsetof(Vertex, texIndex)});
 
         return attributeDescriptions;
     }
@@ -235,6 +238,8 @@ namespace VKModel
         indices.clear();
 
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+
+        int currentTexIndex = 0;
         for (const auto &shape : shapes)
         {
             for (const auto& index : shape.mesh.indices)
@@ -276,6 +281,8 @@ namespace VKModel
                     };
                 }
 
+                vertex.texIndex = currentTexIndex;
+
                 if (uniqueVertices.count(vertex) == 0)
                 {
                     uniqueVertices[vertex] = static_cast<uint32_t> (vertices.size());
@@ -283,7 +290,9 @@ namespace VKModel
                 }
                 indices.push_back(uniqueVertices[vertex]);
             }
+            currentTexIndex++;
         }
+        std::cout << "Number of textures: " << currentTexIndex << std::endl;
     }
 
 }   //  end of the VKModel namespace

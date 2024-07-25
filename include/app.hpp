@@ -40,11 +40,12 @@ public:
                 VKWindow::DEFAULT_WINDOW_NAME},
         instance_{window_}, device_{instance_}, renderer_ {window_, device_}
     {
-
-        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (2 * VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  max count of descriptor SETS which can be allocated in the future 
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();
         loadObjects();
+        std::cout << objects_.size() << std::endl;
+
+        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()).build();
     }
     ~App()= default;
 

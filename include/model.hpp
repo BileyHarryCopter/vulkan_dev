@@ -42,13 +42,14 @@ public:
         glm::vec3    color;
         glm::vec3   normal;
         glm::vec2       uv;
+        int       texIndex;
 
         static std::vector<VkVertexInputBindingDescription>     get_binding_descriptions();
         static std::vector<VkVertexInputAttributeDescription> get_attribute_descriptions();
 
         bool operator== (const Vertex& rhs) const 
         {
-            return position == rhs.position && color == rhs.color && normal == rhs.normal && uv == rhs.uv;
+            return position == rhs.position && color == rhs.color && normal == rhs.normal && uv == rhs.uv && texIndex == rhs.texIndex;
         }
     };
 
@@ -77,6 +78,7 @@ public:
 
     VkImageView getimgview() { return textureimgview_; }
     VkSampler   getsampler() { return texturesampler_; }
+    bool has_texture() { return textureimg_ != VK_NULL_HANDLE; }
 
 private:
     void createTextureImage(const std::string& filepath);
