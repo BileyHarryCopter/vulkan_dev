@@ -41,20 +41,32 @@ namespace VKEngine
         //  creating layout for OBJECT set and it respectively
         auto texturesetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
         std::vector<VkDescriptorSet> texturedescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size());
-        for (int i = 0; i < texturedescriptorsets.size(); i++) 
-        {
-            for (auto& obj : objects_)
-            {
+        // for (int i = 0; i < texturedescriptorsets.size(); i++) 
+        // {
+        //     for (auto& obj : objects_)
+        //     {
+        //         VkDescriptorImageInfo imageInfo{};
+        //         imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        //         imageInfo.imageView   = obj.model_->getimgview();
+        //         imageInfo.sampler     = obj.model_->getsampler();
+
+        //         VKDescriptors::DescriptorWriter  (*texturesetlayout, *globalPool).writeImage(1,  &imageInfo).build(texturedescriptorsets[i]);
+        //         i++;        //  vector of all images are written 2 times
+        //     }
+        // }
+        int descriptorSetIndex = 0;
+        for (int frame = 0; frame < VKSwapchain::MAX_FRAMES_IN_FLIGHT; frame++) {
+            for (auto& obj : objects_) {
                 VkDescriptorImageInfo imageInfo{};
                 imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                imageInfo.imageView   = obj.model_->getimgview();
-                imageInfo.sampler     = obj.model_->getsampler();
+                imageInfo.imageView = obj.model_->getimgview();
+                imageInfo.sampler = obj.model_->getsampler();
 
-                VKDescriptors::DescriptorWriter  (*texturesetlayout, *globalPool).writeImage(1,  &imageInfo).build(texturedescriptorsets[i]);
-                i++;        //  vector of all images are written 2 times
+                VKDescriptors::DescriptorWriter(*texturesetlayout, *globalPool).writeImage(1, &imageInfo).build(texturedescriptorsets[descriptorSetIndex]);
+
+                descriptorSetIndex++;  // Increment the index explicitly
             }
         }
-
 
         auto descriptorSetLayouts = std::vector<VkDescriptorSetLayout> {globalsetlayout->getDescriptorSetLayout() , texturesetlayout->getDescriptorSetLayout()};
         VKRenderSystem::RenderSystem renderSystem {device_, renderer_.getSwapChainRenderPass(), descriptorSetLayouts};
@@ -115,14 +127,14 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-        std::shared_ptr<VKModel::Model> model_shrek       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
-                                                                                                            "../../src/src/assets/viking_room.png");
-        auto obj_shrek                     = VKObject::Object::createObject();
-        obj_shrek.model_                   =                      model_shrek;
-        obj_shrek.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
-        obj_shrek.transform3D_.scale       =                glm::vec3{ -2.0f};
+        // std::shared_ptr<VKModel::Model> model_shrek       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
+        //                                                                                                     "../../src/src/assets/viking_room.png");
+        // auto obj_shrek                     = VKObject::Object::createObject();
+        // obj_shrek.model_                   =                      model_shrek;
+        // obj_shrek.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
+        // obj_shrek.transform3D_.scale       =                glm::vec3{ -2.0f};
 
-        objects_.push_back(std::move(obj_shrek));
+        // objects_.push_back(std::move(obj_shrek));
 
 
         std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",

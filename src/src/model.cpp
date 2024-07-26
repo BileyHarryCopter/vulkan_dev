@@ -25,7 +25,7 @@ struct hash<VKModel::Model::Vertex>
     size_t operator() (const VKModel::Model::Vertex& vertex) const
     {
         size_t seed = 0;
-        Service::hashCombine(seed, vertex.position, vertex.color, vertex.normal, vertex.uv);
+        Service::hashCombine(seed, vertex.position, vertex.color, vertex.normal, vertex.uv, vertex.texIndex);
         return seed;
     }
 };
@@ -237,11 +237,12 @@ namespace VKModel
         vertices.clear();
         indices.clear();
 
-        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
-        int currentTexIndex = 0;
+
+        std::unordered_map<Vertex, uint32_t> uniqueVertices{};
         for (const auto &shape : shapes)
         {
+            int currentTexIndex = 0;
             for (const auto& index : shape.mesh.indices)
             {
                 Vertex vertex{};
@@ -292,7 +293,6 @@ namespace VKModel
             }
             currentTexIndex++;
         }
-        std::cout << "Number of textures: " << currentTexIndex << std::endl;
     }
 
 }   //  end of the VKModel namespace
