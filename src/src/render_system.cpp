@@ -38,9 +38,6 @@ struct SimplePushConstantData
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(SimplePushConstantData);
 
-        std::cout << "Size of descriptorSetLayouts: " << descriptorSetLayouts.size() << std::endl;
-        std::cout << "Data of descriptorSetLayouts: " << descriptorSetLayouts.data() << std::endl;
-
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount         = static_cast<uint32_t>(descriptorSetLayouts.size());
@@ -69,7 +66,6 @@ struct SimplePushConstantData
     {
         pipeline_->bind(frameinfo.commandbuffer_);
 
-        std::cout << "Number of descriptors: " << frameinfo.globaldescriptorsets_.size() << std::endl;
 
         vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[0], 0, nullptr);
@@ -85,9 +81,8 @@ struct SimplePushConstantData
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                 0, sizeof(SimplePushConstantData), &push_data);
 
-            std::cout << "obj index: " << object_index << std::endl;
             vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                pipelineLayout_, 1, 1, &frameinfo.globaldescriptorsets_[object_index + 1], 0, nullptr);
+                                pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
 
             objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
             objects[object_index].model_ -> draw(frameinfo.commandbuffer_);

@@ -40,7 +40,6 @@ public:
     {
         assert (isFrameStarted_ && "Cannot get commandbuffer while the frame is not processing");
 
-        std::cout << "Cur image index:" << currentImageIndex_ << std::endl;
         return commandbuffer_[currentImageIndex_];
     }
 

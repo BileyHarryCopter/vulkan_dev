@@ -179,15 +179,9 @@ namespace VKModel
     void Model::draw(VkCommandBuffer commandbuffer)
     {
         if (hasindexbuffer)
-        {
-            std::cout << " -- Here we are! -- ";
-            std::cout << indexcount_ << std::endl;
             vkCmdDrawIndexed(commandbuffer, indexcount_, 1, 0, 0, 0);
-        }
         else
-        {
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
-        }
     }
 
     void Model::bind(VkCommandBuffer commandbuffer)
@@ -197,9 +191,7 @@ namespace VKModel
         vkCmdBindVertexBuffers(commandbuffer, 0, 1, buffers, offsets);  //  and here too
 
         if (hasindexbuffer)
-        {
             vkCmdBindIndexBuffer(commandbuffer, indexbuff_->getBuffer(), 0, VK_INDEX_TYPE_UINT32);
-        }
     }
 
     std::vector<VkVertexInputBindingDescription> Model::Vertex::get_binding_descriptions()

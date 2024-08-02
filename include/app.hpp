@@ -19,7 +19,7 @@ namespace VKEngine
 struct GlobalUbo
 {
     glm::mat4 projectionView {1.f};
-    glm::vec3 lightDirection = glm::normalize(glm::vec3{2.0, 3.0, 1.0});
+    glm::vec3 lightDirection = glm::normalize(glm::vec3{-2.0, -3.0, -1.0});
 };
 
 class App final
@@ -41,7 +41,6 @@ public:
         instance_{window_}, device_{instance_}, renderer_ {window_, device_}
     {
         loadObjects();
-        std::cout << "Number of objects: " << objects_.size() << std::endl;
 
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool

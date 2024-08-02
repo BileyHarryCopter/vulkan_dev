@@ -27,40 +27,28 @@ namespace VKEngine
 
 
         //  creating layout for GLOBAL set and it respectively
-        auto globalsetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1).build();
-        std::vector<VkDescriptorSet> globaldescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT); 
-        for (int i = 0; i < globaldescriptorsets.size(); i++)
-        {
-            auto bufferInfo = ubobuffs[i]->descriptorInfo();
-
-            VKDescriptors::DescriptorWriter  (*globalsetlayout, *globalPool).writeBuffer(0, &bufferInfo).build(globaldescriptorsets[i]);
-        }
-
-        
-        //  creating layout for OBJECT set and it respectively
-        auto texturesetlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
-        std::vector<VkDescriptorSet> texturedescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size());
+        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1)
+                                                                             .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
+        std::vector<VkDescriptorSet> descriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()); 
         int descriptorSetIndex = 0;
         for (int frame = 0; frame < VKSwapchain::MAX_FRAMES_IN_FLIGHT; frame++) 
         {
-            for (auto& obj : objects_) 
+            auto bufferInfo = ubobuffs[frame]->descriptorInfo();
+
+            for (auto& obj : objects_)
             {
                 VkDescriptorImageInfo imageInfo{};
                 imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 imageInfo.imageView = obj.model_->getimgview();
                 imageInfo.sampler = obj.model_->getsampler();
 
-                std::cout << "Index of descriptorSetIndex: " << descriptorSetIndex << std::endl;
-
-                VKDescriptors::DescriptorWriter(*texturesetlayout, *globalPool).writeImage(1, &imageInfo).build(texturedescriptorsets[descriptorSetIndex]);
+                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).writeImage(1, &imageInfo).build(descriptorsets[descriptorSetIndex]);
 
                 descriptorSetIndex++;  // Increment the index explicitly
             }
         }
 
-        std::cout << "Globalsetlayout: " << globalsetlayout->getDescriptorSetLayout() << std::endl;
-        std::cout << "Texturesetlayout: " << texturesetlayout->getDescriptorSetLayout() << std::endl;
-        auto descriptorSetLayouts = std::vector<VkDescriptorSetLayout> {globalsetlayout->getDescriptorSetLayout() , texturesetlayout->getDescriptorSetLayout()};
+        auto descriptorSetLayouts = std::vector<VkDescriptorSetLayout> {setlayout->getDescriptorSetLayout()};
         VKRenderSystem::RenderSystem renderSystem {device_, renderer_.getSwapChainRenderPass(), descriptorSetLayouts};
 
 
@@ -87,22 +75,12 @@ namespace VKEngine
 
             if (auto commandBuffer = renderer_.beginFrame())
             {
-                std::cout << "\n\nSo, rendering\n";
                 int frameindex = renderer_.getframeindex();
-                std::cout << "Current frame index: " << frameindex << std::endl;
 
-                std::vector<VkDescriptorSet> descriptorsets {};
-                descriptorsets.push_back(globaldescriptorsets[frameindex]);
-                
-                if (descriptorsets[0] != globaldescriptorsets[frameindex])
-                    std::cout << "What???\n";
-
+                std::vector<VkDescriptorSet> Descriptorsets {};
                 for (int i = 0, len = objects_.size(); i < objects_.size(); i++)
-                {
-                    std::cout << "Index of texture: " << len * frameindex + i << std::endl;
-                    descriptorsets.push_back(texturedescriptorsets[len * frameindex + i]);
-                }
-
+                    descriptorsets.push_back(descriptorsets[len * frameindex + i]);
+                
 
                 VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
 
@@ -112,7 +90,6 @@ namespace VKEngine
 
                 ubobuffs[frameindex]->writeToBuffer(&ubo);
                 ubobuffs[frameindex]->flush();
-
 
                 //  renderer
                 renderer_.beginSwapchainRenderpass(commandBuffer);
@@ -128,34 +105,60 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-        std::shared_ptr<VKModel::Model> model_shrek       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
+        std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
                                                                                                             "../../src/src/assets/viking_room.png");
-        auto obj_shrek                     = VKObject::Object::createObject();
-        obj_shrek.model_                   =                      model_shrek;
-        obj_shrek.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
-        obj_shrek.transform3D_.scale       =                glm::vec3{ -2.0f};
+        auto obj_viking_room                     =   VKObject::Object::createObject();
+        obj_viking_room.model_                   =                  model_viking_room;
+        obj_viking_room.transform3D_.translation =                 {0.0f, 0.5f, 0.0f};
+        obj_viking_room.transform3D_.scale       =                    glm::vec3{0.8f};
+        obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
 
-        objects_.push_back(std::move(obj_shrek));
-
-
-        // std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
-        //                                                                                                     "../../src/src/assets/viking_room.png");
-        // auto obj_viking_room                     =   VKObject::Object::createObject();
-        // obj_viking_room.model_                   =                  model_viking_room;
-        // obj_viking_room.transform3D_.translation =                 {1.0f, 0.0f, 1.0f};
-        // obj_viking_room.transform3D_.scale       =                    glm::vec3{2.0f};
-        // obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
-
-        // objects_.push_back(std::move(obj_viking_room));
+        objects_.push_back(std::move(obj_viking_room));
 
 
-        // std::shared_ptr<VKModel::Model> model_vase       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/smooth_vase.obj", "");
-        // auto obj_vase                     = VKObject::Object::createObject();
-        // obj_vase.model_                   =                       model_vase;
-        // obj_vase.transform3D_.translation =              {-2.0f, 0.0f, 1.0f};
-        // obj_vase.transform3D_.scale       =                  glm::vec3{2.0f};
 
-        // objects_.push_back(std::move(obj_vase));
+        std::shared_ptr<VKModel::Model> model_shrek1       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+                                                                                                            "../../src/src/assets/shrek.png");
+        auto obj_shrek1                     = VKObject::Object::createObject();
+        obj_shrek1.model_                   =                     model_shrek1;
+        obj_shrek1.transform3D_.translation =              {0.0f, -1.0f, 0.0f};
+        obj_shrek1.transform3D_.scale       =                glm::vec3{ -0.8f};
+
+        objects_.push_back(std::move(obj_shrek1));
+
+
+
+        std::shared_ptr<VKModel::Model> model_shrek2       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+                                                                                                            "../../src/src/assets/shrek.png");
+        auto obj_shrek2                     = VKObject::Object::createObject();
+        obj_shrek2.model_                   =                     model_shrek2;
+        obj_shrek2.transform3D_.translation =              {0.0f, 1.0f, 0.0f};
+        obj_shrek2.transform3D_.scale       =                glm::vec3{ 0.8f};
+
+        objects_.push_back(std::move(obj_shrek2));
+
+
+
+        std::shared_ptr<VKModel::Model> model_shrek3       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+                                                                                                            "../../src/src/assets/shrek.png");
+        auto obj_shrek3                     = VKObject::Object::createObject();
+        obj_shrek3.model_                   =                     model_shrek3;
+        obj_shrek3.transform3D_.translation =               {2.0f, 1.0f, 0.0f};
+        obj_shrek3.transform3D_.scale       =                 glm::vec3{ -0.8f};
+
+        objects_.push_back(std::move(obj_shrek3));
+
+
+
+        std::shared_ptr<VKModel::Model> model_shrek4       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+                                                                                                            "../../src/src/assets/shrek.png");
+        auto obj_shrek4                     = VKObject::Object::createObject();
+        obj_shrek4.model_                   =                     model_shrek4;
+        obj_shrek4.transform3D_.translation =               {-2.0f, -1.0f, 0.0f};
+        obj_shrek4.transform3D_.scale       =                 glm::vec3{ 0.8f};
+
+        objects_.push_back(std::move(obj_shrek4));
+
     }
 
 }   //  end of VKEngine namespace
