@@ -31,14 +31,15 @@ struct SimplePushConstantData
         vkDestroyPipelineLayout(device_.get_logic(), pipelineLayout_, nullptr);
     }
 
-    void RenderSystem::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts)
+    void RenderSystem::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts) 
     {
         VkPushConstantRange pushConstantRange{};
         pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(SimplePushConstantData);
 
-        std::cout << descriptorSetLayouts.size() << std::endl;
+        std::cout << "Size of descriptorSetLayouts: " << descriptorSetLayouts.size() << std::endl;
+        std::cout << "Data of descriptorSetLayouts: " << descriptorSetLayouts.data() << std::endl;
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -58,8 +59,8 @@ struct SimplePushConstantData
 
         VKPipeline::PipelineConfigInfo pipelineConfig{};
         VKPipeline::Pipeline::defaultPipelineConfigInfo(pipelineConfig);
-        pipelineConfig.renderPass     =                      renderPass;
-        pipelineConfig.pipelineLayout =                 pipelineLayout_;
+        pipelineConfig.renderPass = renderPass;
+        pipelineConfig.pipelineLayout = pipelineLayout_;
 
         pipeline_ = std::make_unique<VKPipeline::Pipeline>(device_, pipelineConfig);
     }
@@ -68,26 +69,28 @@ struct SimplePushConstantData
     {
         pipeline_->bind(frameinfo.commandbuffer_);
 
+        std::cout << "Number of descriptors: " << frameinfo.globaldescriptorsets_.size() << std::endl;
+
         vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                pipelineLayout_, 0, frameinfo.globaldescriptorsets_.size(), frameinfo.globaldescriptorsets_.data(), 0, nullptr);
+                                pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[0], 0, nullptr);
 
-        std::cout << "size of frameinfo.globaldescriptorsets_ = " << frameinfo.globaldescriptorsets_.size() << std::endl;
-
-        for (auto & object : objects)
+        for (int object_index = 0; object_index < objects.size(); ++object_index)
         {
-            SimplePushConstantData                          push_data{};
+            SimplePushConstantData                                         push_data{};
 
-            push_data.modelMatrix    =       object.transform3D_.mat4();
-            push_data.normalMatrix = object.transform3D_.normalMatrix();
+            push_data.modelMatrix    =       objects[object_index].transform3D_.mat4();
+            push_data.normalMatrix = objects[object_index].transform3D_.normalMatrix();
 
             vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                 0, sizeof(SimplePushConstantData), &push_data);
 
-            object.model_ -> bind(frameinfo.commandbuffer_);
-            std::cout << "\nJepka\n";
-            object.model_ -> draw(frameinfo.commandbuffer_);        //  here the problem?
-            std::cout << "\nJepka\n";
+            std::cout << "obj index: " << object_index << std::endl;
+            vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                                pipelineLayout_, 1, 1, &frameinfo.globaldescriptorsets_[object_index + 1], 0, nullptr);
+
+            objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
+            objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
         }
     }
 

@@ -25,7 +25,7 @@ struct hash<VKModel::Model::Vertex>
     size_t operator() (const VKModel::Model::Vertex& vertex) const
     {
         size_t seed = 0;
-        Service::hashCombine(seed, vertex.position, vertex.color, vertex.normal, vertex.uv, vertex.texIndex);
+        Service::hashCombine(seed, vertex.position, vertex.color, vertex.normal, vertex.uv);
         return seed;
     }
 };
@@ -218,7 +218,6 @@ namespace VKModel
         attributeDescriptions.push_back({1, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(Vertex, color)});
         attributeDescriptions.push_back({2, 0, VK_FORMAT_R32G32B32_SFLOAT,   offsetof(Vertex, normal)});
         attributeDescriptions.push_back({3, 0,    VK_FORMAT_R32G32_SFLOAT,       offsetof(Vertex, uv)});
-        attributeDescriptions.push_back({4, 0,         VK_FORMAT_R32_SINT, offsetof(Vertex, texIndex)});
 
         return attributeDescriptions;
     }
@@ -238,11 +237,9 @@ namespace VKModel
         indices.clear();
 
 
-
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
         for (const auto &shape : shapes)
         {
-            int currentTexIndex = 0;
             for (const auto& index : shape.mesh.indices)
             {
                 Vertex vertex{};
@@ -282,7 +279,6 @@ namespace VKModel
                     };
                 }
 
-                vertex.texIndex = currentTexIndex;
 
                 if (uniqueVertices.count(vertex) == 0)
                 {
@@ -291,7 +287,6 @@ namespace VKModel
                 }
                 indices.push_back(uniqueVertices[vertex]);
             }
-            currentTexIndex++;
         }
     }
 

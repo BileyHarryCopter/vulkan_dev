@@ -42,14 +42,13 @@ public:
         glm::vec3    color;
         glm::vec3   normal;
         glm::vec2       uv;
-        int       texIndex;
 
         static std::vector<VkVertexInputBindingDescription>     get_binding_descriptions();
         static std::vector<VkVertexInputAttributeDescription> get_attribute_descriptions();
 
         bool operator== (const Vertex& rhs) const 
         {
-            return position == rhs.position && color == rhs.color && normal == rhs.normal && uv == rhs.uv && texIndex == rhs.texIndex;
+            return position == rhs.position && color == rhs.color && normal == rhs.normal && uv == rhs.uv;
         }
     };
 
