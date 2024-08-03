@@ -71,7 +71,7 @@ namespace VKEngine
             camera.setViewYXZ(viewerObject.transform3D_.translation, viewerObject.transform3D_.rotation);
 
             float aspect = renderer_.getAspectRatio();
-            camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 10.f);
+            camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 1000.f);
 
             if (auto commandBuffer = renderer_.beginFrame())
             {
@@ -105,59 +105,66 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-        std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
+
+        for (int i = 0; i < 10; i++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
                                                                                                             "../../src/src/assets/viking_room.png");
-        auto obj_viking_room                     =   VKObject::Object::createObject();
-        obj_viking_room.model_                   =                  model_viking_room;
-        obj_viking_room.transform3D_.translation =                 {0.0f, 0.5f, 0.0f};
-        obj_viking_room.transform3D_.scale       =                    glm::vec3{0.8f};
-        obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
+                auto obj_viking_room                     =   VKObject::Object::createObject();
+                obj_viking_room.model_                   =                  model_viking_room;
+                obj_viking_room.transform3D_.translation =         {i * 2.0f, j * 2.0f, 0.0f};
+                obj_viking_room.transform3D_.scale       =                    glm::vec3{0.8f};
+                obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
 
-        objects_.push_back(std::move(obj_viking_room));
-
-
-
-        std::shared_ptr<VKModel::Model> model_shrek1       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-                                                                                                            "../../src/src/assets/shrek.png");
-        auto obj_shrek1                     = VKObject::Object::createObject();
-        obj_shrek1.model_                   =                     model_shrek1;
-        obj_shrek1.transform3D_.translation =              {0.0f, -1.0f, 0.0f};
-        obj_shrek1.transform3D_.scale       =                glm::vec3{ -0.8f};
-
-        objects_.push_back(std::move(obj_shrek1));
+                objects_.push_back(std::move(obj_viking_room));
+            }
+        }
 
 
 
-        std::shared_ptr<VKModel::Model> model_shrek2       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-                                                                                                            "../../src/src/assets/shrek.png");
-        auto obj_shrek2                     = VKObject::Object::createObject();
-        obj_shrek2.model_                   =                     model_shrek2;
-        obj_shrek2.transform3D_.translation =              {0.0f, 1.0f, 0.0f};
-        obj_shrek2.transform3D_.scale       =                glm::vec3{ 0.8f};
+        // std::shared_ptr<VKModel::Model> model_shrek1       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+        //                                                                                                     "../../src/src/assets/shrek.png");
+        // auto obj_shrek1                     = VKObject::Object::createObject();
+        // obj_shrek1.model_                   =                     model_shrek1;
+        // obj_shrek1.transform3D_.translation =              {0.0f, -1.0f, 0.0f};
+        // obj_shrek1.transform3D_.scale       =                glm::vec3{ -0.8f};
 
-        objects_.push_back(std::move(obj_shrek2));
-
-
-
-        std::shared_ptr<VKModel::Model> model_shrek3       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-                                                                                                            "../../src/src/assets/shrek.png");
-        auto obj_shrek3                     = VKObject::Object::createObject();
-        obj_shrek3.model_                   =                     model_shrek3;
-        obj_shrek3.transform3D_.translation =               {2.0f, 1.0f, 0.0f};
-        obj_shrek3.transform3D_.scale       =                 glm::vec3{ -0.8f};
-
-        objects_.push_back(std::move(obj_shrek3));
+        // objects_.push_back(std::move(obj_shrek1));
 
 
 
-        std::shared_ptr<VKModel::Model> model_shrek4       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-                                                                                                            "../../src/src/assets/shrek.png");
-        auto obj_shrek4                     = VKObject::Object::createObject();
-        obj_shrek4.model_                   =                     model_shrek4;
-        obj_shrek4.transform3D_.translation =               {-2.0f, -1.0f, 0.0f};
-        obj_shrek4.transform3D_.scale       =                 glm::vec3{ 0.8f};
+        // std::shared_ptr<VKModel::Model> model_shrek2       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+        //                                                                                                     "../../src/src/assets/shrek.png");
+        // auto obj_shrek2                     = VKObject::Object::createObject();
+        // obj_shrek2.model_                   =                     model_shrek2;
+        // obj_shrek2.transform3D_.translation =              {0.0f, 1.0f, 0.0f};
+        // obj_shrek2.transform3D_.scale       =                glm::vec3{ 0.8f};
 
-        objects_.push_back(std::move(obj_shrek4));
+        // objects_.push_back(std::move(obj_shrek2));
+
+
+
+        // std::shared_ptr<VKModel::Model> model_shrek3       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+        //                                                                                                     "../../src/src/assets/shrek.png");
+        // auto obj_shrek3                     = VKObject::Object::createObject();
+        // obj_shrek3.model_                   =                     model_shrek3;
+        // obj_shrek3.transform3D_.translation =               {2.0f, 1.0f, 0.0f};
+        // obj_shrek3.transform3D_.scale       =                 glm::vec3{ -0.8f};
+
+        // objects_.push_back(std::move(obj_shrek3));
+
+
+
+        // std::shared_ptr<VKModel::Model> model_shrek4       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
+        //                                                                                                     "../../src/src/assets/shrek.png");
+        // auto obj_shrek4                     = VKObject::Object::createObject();
+        // obj_shrek4.model_                   =                     model_shrek4;
+        // obj_shrek4.transform3D_.translation =               {-2.0f, -1.0f, 0.0f};
+        // obj_shrek4.transform3D_.scale       =                 glm::vec3{ 0.8f};
+
+        // objects_.push_back(std::move(obj_shrek4));
 
     }
 

@@ -70,6 +70,9 @@ struct SimplePushConstantData
         vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[0], 0, nullptr);
 
+        //  1) Вынести связывание текстур, засунутых в отдельный массив.
+        //  2) Отсечение по видимости. 
+
         for (int object_index = 0; object_index < objects.size(); ++object_index)
         {
             SimplePushConstantData                                         push_data{};

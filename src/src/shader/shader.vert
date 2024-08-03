@@ -5,13 +5,9 @@ layout(location = 1) in  vec3     color;
 layout(location = 2) in  vec3    normal;
 layout(location = 3) in  vec2        uv;
 
-//  layout(location = 4) in  int inTexIndex;  // Индекс текстуры, передаваемый из буфера вершин
-
-
 
 layout(location = 0) out vec3    fragColor;
 layout(location = 1) out vec2 fragTexCoord;
-//  layout(location = 2) out flat int texIndex;  // Передаем индекс текстуры во фрагментный шейдер
 
 
 layout(set = 0, binding = 0) uniform GlobalUbo {
@@ -35,5 +31,4 @@ void main() {
 
     fragColor    = lightIntensity * color;
     fragTexCoord =                     uv;
-    //  texIndex     =             inTexIndex;  // Передаем входной индекс в выходную переменную
 }
