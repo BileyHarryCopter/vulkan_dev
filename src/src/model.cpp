@@ -228,6 +228,7 @@ namespace VKModel
         vertices.clear();
         indices.clear();
 
+
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
         for (const auto &shape : shapes)
         {
@@ -269,6 +270,7 @@ namespace VKModel
                         1.0f - attrib.texcoords[2 * texcoord_index + 1],
                     };
                 }
+
 
                 if (uniqueVertices.count(vertex) == 0)
                 {

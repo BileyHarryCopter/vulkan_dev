@@ -12,6 +12,7 @@
 #include "device.hpp"
 #include "buffmanager.hpp"
 
+
 namespace VKModel
 {
 
@@ -76,6 +77,7 @@ public:
 
     VkImageView getimgview() { return textureimgview_; }
     VkSampler   getsampler() { return texturesampler_; }
+    bool has_texture() { return textureimg_ != VK_NULL_HANDLE; }
 
 private:
     void createTextureImage(const std::string& filepath);

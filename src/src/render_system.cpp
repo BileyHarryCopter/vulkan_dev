@@ -19,9 +19,10 @@ struct SimplePushConstantData
     glm::mat4 normalMatrix{1.f};
 };
 
-    RenderSystem::RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, VkDescriptorSetLayout globalSetLayout): device_{device} 
+    RenderSystem::RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts): device_{device} 
     {
-        createPipelineLayout(globalSetLayout);
+        createPipelineLayout(descriptorSetLayouts);
+
         createPipeline(renderPass);
     }
 
@@ -30,14 +31,12 @@ struct SimplePushConstantData
         vkDestroyPipelineLayout(device_.get_logic(), pipelineLayout_, nullptr);
     }
 
-    void RenderSystem::createPipelineLayout(VkDescriptorSetLayout globalSetLayout) 
+    void RenderSystem::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts) 
     {
         VkPushConstantRange pushConstantRange{};
         pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(SimplePushConstantData);
-
-        std::vector<VkDescriptorSetLayout> descriptorSetLayouts{globalSetLayout};
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -67,22 +66,29 @@ struct SimplePushConstantData
     {
         pipeline_->bind(frameinfo.commandbuffer_);
 
+
         vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                pipelineLayout_, 0, 1, &frameinfo.globaldescriptorset_, 0, nullptr);
+                                pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[0], 0, nullptr);
 
-        for (auto & object : objects)
+        //  1) Вынести связывание текстур, засунутых в отдельный массив.
+        //  2) Отсечение по видимости. 
+
+        for (int object_index = 0; object_index < objects.size(); ++object_index)
         {
-            SimplePushConstantData                    push_data{};
+            SimplePushConstantData                                         push_data{};
 
-            push_data.modelMatrix    =       object.transform3D_.mat4();
-            push_data.normalMatrix = object.transform3D_.normalMatrix();
+            push_data.modelMatrix    =       objects[object_index].transform3D_.mat4();
+            push_data.normalMatrix = objects[object_index].transform3D_.normalMatrix();
 
             vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0, sizeof(SimplePushConstantData), &push_data); 
+                                0, sizeof(SimplePushConstantData), &push_data);
 
-            object.model_ -> bind(frameinfo.commandbuffer_);
-            object.model_ -> draw(frameinfo.commandbuffer_);
+            vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                                pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
+
+            objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
+            objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
         }
     }
 

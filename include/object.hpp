@@ -49,6 +49,7 @@ public:
     glm::vec3                       color_{};
     Transform3Dcomponent      transform3D_{};
 
+    bool has_material() { return model_->has_texture(); }
 };
 
 }

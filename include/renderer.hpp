@@ -40,7 +40,7 @@ public:
     {
         assert (isFrameStarted_ && "Cannot get commandbuffer while the frame is not processing");
 
-        return commandbuffer_[currentImageIndex_]; 
+        return commandbuffer_[currentImageIndex_];
     }
 
     //  functions for setting renderpass

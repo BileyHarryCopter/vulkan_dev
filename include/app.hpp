@@ -19,7 +19,7 @@ namespace VKEngine
 struct GlobalUbo
 {
     glm::mat4 projectionView {1.f};
-    glm::vec3 lightDirection = glm::normalize(glm::vec3{2.0, 3.0, 1.0});
+    glm::vec3 lightDirection = glm::normalize(glm::vec3{-2.0, -3.0, -1.0});
 };
 
 class App final
@@ -31,7 +31,7 @@ class App final
 
     //  oreder matters
     std::unique_ptr<VKDescriptors::DescriptorPool> globalPool {};
-    std::vector<VKObject::Object> objects_;
+    std::vector<VKObject::Object>                       objects_;
 
 public:
     App() : 
@@ -40,11 +40,11 @@ public:
                 VKWindow::DEFAULT_WINDOW_NAME},
         instance_{window_}, device_{instance_}, renderer_ {window_, device_}
     {
-
-        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets(VKSwapchain::MAX_FRAMES_IN_FLIGHT)
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();
         loadObjects();
+
+        globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()).build();
     }
     ~App()= default;
 

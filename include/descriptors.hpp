@@ -12,7 +12,7 @@ namespace VKDescriptors
  
 class DescriptorSetLayout 
 {
-    VKDevice::Device &                                          device_;
+    VKDevice::Device&                                           device_;
     VkDescriptorSetLayout                           descriptorSetLayout;
     std::unordered_map<uint32_t, VkDescriptorSetLayoutBinding> bindings;
  
@@ -81,7 +81,7 @@ public:
     void resetPool();
 };
 
-class DescriptorWriter  //  class for correct writing infromation into desriptorsets from descriptor pool
+class DescriptorWriter  //  class for correct writing infromation into descriptor sets from descriptor pool
 {
 
     DescriptorSetLayout&           setLayout;

@@ -16,9 +16,9 @@ struct FrameInfo
 {
     int  frameindex_;
     float frametime_;
-    VkCommandBuffer       commandbuffer_;
-    VKCamera::Camera&            camera_;
-    VkDescriptorSet globaldescriptorset_;
+    VkCommandBuffer                     commandbuffer_;
+    VKCamera::Camera&                          camera_;
+    std::vector<VkDescriptorSet> globaldescriptorsets_;
 };
 
 class RenderSystem 
@@ -30,7 +30,7 @@ class RenderSystem
     VkPipelineLayout                pipelineLayout_;
 
 public:
-    RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, VkDescriptorSetLayout globalSetLayout);
+    RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
     ~RenderSystem();
 
     RenderSystem(const RenderSystem &) = delete;
@@ -39,7 +39,7 @@ public:
     void renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &Objects);
 
 private:
-    void createPipelineLayout(VkDescriptorSetLayout globalSetLayout);
+    void createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
     void createPipeline(VkRenderPass renderPass);
 
 };
