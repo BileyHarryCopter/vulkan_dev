@@ -99,6 +99,16 @@ public:
     bool has_texture() { return textureimg_ != VK_NULL_HANDLE; }
     bool has_meshlets() { return hasmeshlets; }
     uint32_t get_meshlet_count() { return meshletcount_; }
+    
+    VkBuffer get_meshlet_buffer() { return hasmeshlets ? meshletbuff_->getBuffer() : VK_NULL_HANDLE; }
+    VkBuffer get_meshlet_vertices_buffer() { return hasmeshlets ? meshletverticesbuff_->getBuffer() : VK_NULL_HANDLE; }
+    VkBuffer get_meshlet_triangles_buffer() { return hasmeshlets ? meshlettrianglesbuff_->getBuffer() : VK_NULL_HANDLE; }
+    VkBuffer get_vertex_buffer() { return vertexbuff_->getBuffer(); }
+    
+    VkDescriptorBufferInfo get_meshlet_buffer_info() { return hasmeshlets ? meshletbuff_->descriptorInfo() : VkDescriptorBufferInfo{}; }
+    VkDescriptorBufferInfo get_meshlet_vertices_buffer_info() { return hasmeshlets ? meshletverticesbuff_->descriptorInfo() : VkDescriptorBufferInfo{}; }
+    VkDescriptorBufferInfo get_meshlet_triangles_buffer_info() { return hasmeshlets ? meshlettrianglesbuff_->descriptorInfo() : VkDescriptorBufferInfo{}; }
+    VkDescriptorBufferInfo get_vertex_buffer_info() { return vertexbuff_->descriptorInfo(); }
 
 private:
     void createTextureImage(const std::string& filepath);

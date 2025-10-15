@@ -28,9 +28,10 @@ class RenderSystem
 
     std::unique_ptr<VKPipeline::Pipeline> pipeline_;
     VkPipelineLayout                pipelineLayout_;
+    bool                           useMeshShaders_ = false;
 
 public:
-    RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
+    RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, bool useMeshShaders = false);
     ~RenderSystem();
 
     RenderSystem(const RenderSystem &) = delete;

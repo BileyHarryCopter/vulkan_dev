@@ -27,8 +27,13 @@ namespace VKEngine
 
 
         //  creating layout for GLOBAL set and it respectively
-        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1)
-                                                                             .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
+        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 1)
+                                                                             .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1)
+                                                                             .addBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // Meshlets
+                                                                             .addBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // MeshletVertices
+                                                                             .addBinding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // MeshletTriangles
+                                                                             .addBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // Vertices
+                                                                             .build();
         std::vector<VkDescriptorSet> descriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()); 
         int descriptorSetIndex = 0;
         for (int frame = 0; frame < VKSwapchain::MAX_FRAMES_IN_FLIGHT; frame++) 
@@ -42,14 +47,35 @@ namespace VKEngine
                 imageInfo.imageView = obj.model_->getimgview();
                 imageInfo.sampler = obj.model_->getsampler();
 
-                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).writeImage(1, &imageInfo).build(descriptorsets[descriptorSetIndex]);
+                auto writer = VKDescriptors::DescriptorWriter(*setlayout, *globalPool)
+                    .writeBuffer(0, &bufferInfo)
+                    .writeImage(1, &imageInfo);
+                
+                // Add meshlet buffers if available
+                if (obj.model_->has_meshlets())
+                {
+                    auto meshletInfo = obj.model_->get_meshlet_buffer_info();
+                    auto meshletVerticesInfo = obj.model_->get_meshlet_vertices_buffer_info();
+                    auto meshletTrianglesInfo = obj.model_->get_meshlet_triangles_buffer_info();
+                    auto vertexInfo = obj.model_->get_vertex_buffer_info();
+                    
+                    writer.writeBuffer(2, &meshletInfo)
+                          .writeBuffer(3, &meshletVerticesInfo)
+                          .writeBuffer(4, &meshletTrianglesInfo)
+                          .writeBuffer(5, &vertexInfo);
+                }
+                
+                writer.build(descriptorsets[descriptorSetIndex]);
 
                 descriptorSetIndex++;  // Increment the index explicitly
             }
         }
 
         auto descriptorSetLayouts = std::vector<VkDescriptorSetLayout> {setlayout->getDescriptorSetLayout()};
-        VKRenderSystem::RenderSystem renderSystem {device_, renderer_.getSwapChainRenderPass(), descriptorSetLayouts};
+        
+        // Enable mesh shaders (set to true to use meshlet rendering)
+        bool useMeshShaders = false;  // Set to true to enable mesh shader rendering
+        VKRenderSystem::RenderSystem renderSystem {device_, renderer_.getSwapChainRenderPass(), descriptorSetLayouts, useMeshShaders};
 
 
         VKCamera::Camera camera{};

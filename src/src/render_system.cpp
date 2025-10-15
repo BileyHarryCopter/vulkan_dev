@@ -19,7 +19,7 @@ struct SimplePushConstantData
     glm::mat4 normalMatrix{1.f};
 };
 
-    RenderSystem::RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts): device_{device} 
+    RenderSystem::RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts, bool useMeshShaders): device_{device}, useMeshShaders_{useMeshShaders}
     {
         createPipelineLayout(descriptorSetLayouts);
 
@@ -34,7 +34,15 @@ struct SimplePushConstantData
     void RenderSystem::createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts) 
     {
         VkPushConstantRange pushConstantRange{};
-        pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        if (useMeshShaders_)
+        {
+            // Mesh and task shaders also need push constants
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        else
+        {
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         pushConstantRange.offset = 0;
         pushConstantRange.size = sizeof(SimplePushConstantData);
 
@@ -59,7 +67,7 @@ struct SimplePushConstantData
         pipelineConfig.renderPass = renderPass;
         pipelineConfig.pipelineLayout = pipelineLayout_;
 
-        pipeline_ = std::make_unique<VKPipeline::Pipeline>(device_, pipelineConfig);
+        pipeline_ = std::make_unique<VKPipeline::Pipeline>(device_, pipelineConfig, useMeshShaders_);
     }
 
     void RenderSystem::renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &objects)
@@ -80,15 +88,33 @@ struct SimplePushConstantData
             push_data.modelMatrix    =       objects[object_index].transform3D_.mat4();
             push_data.normalMatrix = objects[object_index].transform3D_.normalMatrix();
 
-            vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
-                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0, sizeof(SimplePushConstantData), &push_data);
+            if (useMeshShaders_)
+            {
+                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
+                                    VK_SHADER_STAGE_TASK_BIT_EXT | VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0, sizeof(SimplePushConstantData), &push_data);
+            }
+            else
+            {
+                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
+                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0, sizeof(SimplePushConstantData), &push_data);
+            }
 
             vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
 
-            objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
-            objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
+            if (useMeshShaders_ && objects[object_index].model_->has_meshlets())
+            {
+                // Use meshlet rendering if available
+                objects[object_index].model_->draw_meshlets(frameinfo.commandbuffer_);
+            }
+            else
+            {
+                // Fall back to traditional rendering
+                objects[object_index].model_->bind(frameinfo.commandbuffer_);
+                objects[object_index].model_->draw(frameinfo.commandbuffer_);
+            }
         }
     }
 
