@@ -27,7 +27,7 @@ layout(set = 0, binding = 3) readonly buffer MeshletVertices {
 };
 
 layout(set = 0, binding = 4) readonly buffer MeshletTriangles {
-    uint8_t meshletTriangles[];
+    uint meshletTriangles[];
 };
 
 layout(set = 0, binding = 5) readonly buffer Vertices {
@@ -80,10 +80,12 @@ void main() {
     uint primitiveCount = m.primitiveCount;
     for (uint i = threadId; i < primitiveCount; i += 32) {
         uint triangleIndex = m.primitiveOffset + i * 3;
-        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(
-            uint(meshletTriangles[triangleIndex + 0]),
-            uint(meshletTriangles[triangleIndex + 1]),
-            uint(meshletTriangles[triangleIndex + 2])
-        );
+        
+        // Read packed bytes from uint array (assuming 4 uint8 values packed per uint)
+        uint idx0 = meshletTriangles[triangleIndex + 0];
+        uint idx1 = meshletTriangles[triangleIndex + 1];
+        uint idx2 = meshletTriangles[triangleIndex + 2];
+        
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(idx0 & 0xFF, idx1 & 0xFF, idx2 & 0xFF);
     }
 }

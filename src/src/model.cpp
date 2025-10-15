@@ -359,9 +359,9 @@ namespace VKModel
                 }
                 
                 // Add triangle indices (as local meshlet indices)
-                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx0]));
-                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx1]));
-                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx2]));
+                meshletTriangles.push_back(static_cast<uint32_t>(vertexMap[idx0]));
+                meshletTriangles.push_back(static_cast<uint32_t>(vertexMap[idx1]));
+                meshletTriangles.push_back(static_cast<uint32_t>(vertexMap[idx2]));
                 
                 meshletTriangleCount++;
                 currentTriangle++;
@@ -375,7 +375,7 @@ namespace VKModel
 
     void Model::createMeshletBuffers(const std::vector<Meshlet>& meshlets, 
                                       const std::vector<uint32_t>& meshletVertices,
-                                      const std::vector<uint8_t>& meshletTriangles)
+                                      const std::vector<uint32_t>& meshletTriangles)
     {
         meshletcount_ = static_cast<uint32_t>(meshlets.size());
         hasmeshlets = meshletcount_ > 0;
@@ -427,7 +427,7 @@ namespace VKModel
         // Create meshlet triangles buffer
         {
             uint32_t triangleIndexCount = static_cast<uint32_t>(meshletTriangles.size());
-            uint32_t triangleIndexSize = sizeof(uint8_t);
+            uint32_t triangleIndexSize = sizeof(uint32_t);
             VkDeviceSize buffsize = triangleIndexSize * triangleIndexCount;
             
             VKBuffmanager::Buffmanager stagingBuffer {device_, triangleIndexSize, triangleIndexCount,

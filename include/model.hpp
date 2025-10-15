@@ -72,7 +72,7 @@ public:
         std::vector<uint32_t>  indices{};
         std::vector<Meshlet>  meshlets{};
         std::vector<uint32_t> meshletVertices{};
-        std::vector<uint8_t>  meshletTriangles{};
+        std::vector<uint32_t>  meshletTriangles{};  // Changed from uint8_t to uint32_t
 
         std::string  filepath_to_texture;
 
@@ -118,7 +118,7 @@ private:
     void  createIndexBuffer(const std::vector<uint32_t>& indices);
     void createMeshletBuffers(const std::vector<Meshlet>& meshlets, 
                               const std::vector<uint32_t>& meshletVertices,
-                              const std::vector<uint8_t>& meshletTriangles);
+                              const std::vector<uint32_t>& meshletTriangles);
 };
 
 }   //  end of the VKModel namespace
