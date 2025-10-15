@@ -1,0 +1,35 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 32) in;
+
+struct Meshlet {
+    uint vertexOffset;
+    uint vertexCount;
+    uint primitiveOffset;
+    uint primitiveCount;
+};
+
+layout(set = 0, binding = 2) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+layout(set = 0, binding = 0) uniform GlobalUbo {
+    mat4 projectionViewMatrix;
+    vec3 directionToLight;
+} ubo;
+
+layout(push_constant) uniform Push {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+} push;
+
+void main() {
+    uint meshletIndex = gl_WorkGroupID.x;
+    
+    if (meshletIndex < meshlets.length()) {
+        // Simple pass-through - no culling for now
+        // In a real implementation, you would perform frustum culling here
+        EmitMeshTasksEXT(1, 1, 1);
+    }
+}

@@ -27,6 +27,12 @@ class Model final
     std::unique_ptr<VKBuffmanager::Buffmanager>  indexbuff_;
     uint32_t indexcount_ = 0;
 
+    bool hasmeshlets = false;
+    std::unique_ptr<VKBuffmanager::Buffmanager> meshletbuff_;
+    std::unique_ptr<VKBuffmanager::Buffmanager> meshletverticesbuff_;
+    std::unique_ptr<VKBuffmanager::Buffmanager> meshlettrianglesbuff_;
+    uint32_t meshletcount_ = 0;
+
     VkImage             textureimg_ = VK_NULL_HANDLE;
     VkDeviceMemory   textureimgmem_ = VK_NULL_HANDLE;
     uint32_t       textureimgcount_ =              0;
@@ -52,14 +58,26 @@ public:
         }
     };
 
+    struct Meshlet
+    {
+        uint32_t vertexOffset;
+        uint32_t vertexCount;
+        uint32_t primitiveOffset;
+        uint32_t primitiveCount;
+    };
+
     struct Builder 
     {
         std::vector<Vertex>   vertices{};
         std::vector<uint32_t>  indices{};
+        std::vector<Meshlet>  meshlets{};
+        std::vector<uint32_t> meshletVertices{};
+        std::vector<uint8_t>  meshletTriangles{};
 
         std::string  filepath_to_texture;
 
         void load_models (const std::string& filepath_to_model);
+        void generate_meshlets();
     };
 
     Model (VKDevice::Device& device, const VKModel::Model::Builder& builder);
@@ -74,10 +92,13 @@ public:
 
     void bind(VkCommandBuffer commandbuffer);
     void draw(VkCommandBuffer commandbuffer);
+    void draw_meshlets(VkCommandBuffer commandbuffer);
 
     VkImageView getimgview() { return textureimgview_; }
     VkSampler   getsampler() { return texturesampler_; }
     bool has_texture() { return textureimg_ != VK_NULL_HANDLE; }
+    bool has_meshlets() { return hasmeshlets; }
+    uint32_t get_meshlet_count() { return meshletcount_; }
 
 private:
     void createTextureImage(const std::string& filepath);
@@ -85,6 +106,9 @@ private:
     void createTextureSampler();
     void createVertexBuffer(const std::vector<Vertex>& vertices);
     void  createIndexBuffer(const std::vector<uint32_t>& indices);
+    void createMeshletBuffers(const std::vector<Meshlet>& meshlets, 
+                              const std::vector<uint32_t>& meshletVertices,
+                              const std::vector<uint8_t>& meshletTriangles);
 };
 
 }   //  end of the VKModel namespace

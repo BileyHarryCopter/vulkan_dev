@@ -18,6 +18,8 @@ namespace VKPipeline
 
 const std::string VERT_SHADER_FILE_NAME = "../../src/src/shader/vert.spv";
 const std::string FRAG_SHADER_FILE_NAME = "../../src/src/shader/frag.spv";
+const std::string TASK_SHADER_FILE_NAME = "../../src/src/shader/task.spv";
+const std::string MESH_SHADER_FILE_NAME = "../../src/src/shader/mesh.spv";
 
 struct PipelineConfigInfo 
 {
@@ -50,15 +52,19 @@ class Pipeline final
 
     VkShaderModule   vertshadermodule_ = VK_NULL_HANDLE;
     VkShaderModule   fragshadermodule_ = VK_NULL_HANDLE;
+    VkShaderModule   taskshadermodule_ = VK_NULL_HANDLE;
+    VkShaderModule   meshshadermodule_ = VK_NULL_HANDLE;
 
     VkPipeline       graphicspipeline_ = VK_NULL_HANDLE;
+    bool                  useMeshShaders_ = false;
 
 
     void createGraphicsPipeline(const PipelineConfigInfo& configInfo);
+    void createMeshShaderPipeline(const PipelineConfigInfo& configInfo);
 
 public:
 
-    Pipeline (VKDevice::Device& device, const PipelineConfigInfo& configInfo);
+    Pipeline (VKDevice::Device& device, const PipelineConfigInfo& configInfo, bool useMeshShaders = false);
     ~Pipeline();
 
     Pipeline(const Pipeline&) = delete;

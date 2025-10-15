@@ -1,0 +1,89 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 64, max_primitives = 126) out;
+
+struct Vertex {
+    vec3 position;
+    vec3 color;
+    vec3 normal;
+    vec2 uv;
+};
+
+struct Meshlet {
+    uint vertexOffset;
+    uint vertexCount;
+    uint primitiveOffset;
+    uint primitiveCount;
+};
+
+layout(set = 0, binding = 2) readonly buffer Meshlets {
+    Meshlet meshlets[];
+};
+
+layout(set = 0, binding = 3) readonly buffer MeshletVertices {
+    uint meshletVertices[];
+};
+
+layout(set = 0, binding = 4) readonly buffer MeshletTriangles {
+    uint8_t meshletTriangles[];
+};
+
+layout(set = 0, binding = 5) readonly buffer Vertices {
+    Vertex vertices[];
+};
+
+layout(set = 0, binding = 0) uniform GlobalUbo {
+    mat4 projectionViewMatrix;
+    vec3 directionToLight;
+} ubo;
+
+layout(push_constant) uniform Push {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+} push;
+
+layout(location = 0) out vec3 fragColor[];
+layout(location = 1) out vec2 fragTexCoord[];
+
+const float AMBIENT = 0.02;
+
+void main() {
+    uint meshletIndex = gl_WorkGroupID.x;
+    uint threadId = gl_LocalInvocationID.x;
+    
+    if (meshletIndex >= meshlets.length()) {
+        return;
+    }
+    
+    Meshlet m = meshlets[meshletIndex];
+    
+    SetMeshOutputsEXT(m.vertexCount, m.primitiveCount);
+    
+    // Process vertices
+    if (threadId < m.vertexCount) {
+        uint vertexIndex = meshletVertices[m.vertexOffset + threadId];
+        Vertex v = vertices[vertexIndex];
+        
+        vec4 worldPos = push.modelMatrix * vec4(v.position, 1.0);
+        gl_MeshVerticesEXT[threadId].gl_Position = ubo.projectionViewMatrix * worldPos;
+        
+        vec3 normalWorldSpace = normalize(mat3(push.normalMatrix) * v.normal);
+        float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0);
+        
+        fragColor[threadId] = lightIntensity * v.color;
+        fragTexCoord[threadId] = v.uv;
+    }
+    
+    // Process primitives (triangles)
+    uint primitiveCount = m.primitiveCount;
+    for (uint i = threadId; i < primitiveCount; i += 32) {
+        uint triangleIndex = m.primitiveOffset + i * 3;
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(
+            uint(meshletTriangles[triangleIndex + 0]),
+            uint(meshletTriangles[triangleIndex + 1]),
+            uint(meshletTriangles[triangleIndex + 2])
+        );
+    }
+}

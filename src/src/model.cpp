@@ -45,6 +45,11 @@ namespace VKModel
         }
         createVertexBuffer    (builder.vertices);
         createIndexBuffer     (builder.indices);
+        
+        if (!builder.meshlets.empty())
+        {
+            createMeshletBuffers(builder.meshlets, builder.meshletVertices, builder.meshletTriangles);
+        }
     }
 
     Model::~Model()
@@ -184,6 +189,16 @@ namespace VKModel
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
     }
 
+    void Model::draw_meshlets(VkCommandBuffer commandbuffer)
+    {
+        if (hasmeshlets)
+        {
+            // Draw meshlets using mesh shader dispatch
+            // Each workgroup processes one meshlet
+            vkCmdDrawMeshTasksEXT(commandbuffer, meshletcount_, 1, 1);
+        }
+    }
+
     void Model::bind(VkCommandBuffer commandbuffer)
     {
         VkBuffer buffers[] = {vertexbuff_->getBuffer()};
@@ -279,6 +294,154 @@ namespace VKModel
                 }
                 indices.push_back(uniqueVertices[vertex]);
             }
+        }
+    }
+
+    void Model::Builder::generate_meshlets()
+    {
+        // Simple meshlet generation: group triangles into meshlets
+        const uint32_t MAX_VERTICES = 64;    // Max vertices per meshlet
+        const uint32_t MAX_TRIANGLES = 126;  // Max triangles per meshlet
+        
+        meshlets.clear();
+        meshletVertices.clear();
+        meshletTriangles.clear();
+        
+        if (indices.empty() || indices.size() % 3 != 0)
+            return;
+        
+        uint32_t triangleCount = indices.size() / 3;
+        uint32_t currentTriangle = 0;
+        
+        while (currentTriangle < triangleCount)
+        {
+            Meshlet meshlet{};
+            meshlet.vertexOffset = static_cast<uint32_t>(meshletVertices.size());
+            meshlet.primitiveOffset = static_cast<uint32_t>(meshletTriangles.size());
+            
+            std::unordered_map<uint32_t, uint32_t> vertexMap;
+            uint32_t meshletVertexCount = 0;
+            uint32_t meshletTriangleCount = 0;
+            
+            // Add triangles to meshlet
+            while (currentTriangle < triangleCount && 
+                   meshletTriangleCount < MAX_TRIANGLES)
+            {
+                uint32_t idx0 = indices[currentTriangle * 3 + 0];
+                uint32_t idx1 = indices[currentTriangle * 3 + 1];
+                uint32_t idx2 = indices[currentTriangle * 3 + 2];
+                
+                // Check if adding this triangle would exceed vertex limit
+                uint32_t newVertices = 0;
+                if (vertexMap.find(idx0) == vertexMap.end()) newVertices++;
+                if (vertexMap.find(idx1) == vertexMap.end()) newVertices++;
+                if (vertexMap.find(idx2) == vertexMap.end()) newVertices++;
+                
+                if (meshletVertexCount + newVertices > MAX_VERTICES)
+                    break;
+                
+                // Add vertices to meshlet
+                if (vertexMap.find(idx0) == vertexMap.end())
+                {
+                    vertexMap[idx0] = meshletVertexCount++;
+                    meshletVertices.push_back(idx0);
+                }
+                if (vertexMap.find(idx1) == vertexMap.end())
+                {
+                    vertexMap[idx1] = meshletVertexCount++;
+                    meshletVertices.push_back(idx1);
+                }
+                if (vertexMap.find(idx2) == vertexMap.end())
+                {
+                    vertexMap[idx2] = meshletVertexCount++;
+                    meshletVertices.push_back(idx2);
+                }
+                
+                // Add triangle indices (as local meshlet indices)
+                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx0]));
+                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx1]));
+                meshletTriangles.push_back(static_cast<uint8_t>(vertexMap[idx2]));
+                
+                meshletTriangleCount++;
+                currentTriangle++;
+            }
+            
+            meshlet.vertexCount = meshletVertexCount;
+            meshlet.primitiveCount = meshletTriangleCount;
+            meshlets.push_back(meshlet);
+        }
+    }
+
+    void Model::createMeshletBuffers(const std::vector<Meshlet>& meshlets, 
+                                      const std::vector<uint32_t>& meshletVertices,
+                                      const std::vector<uint8_t>& meshletTriangles)
+    {
+        meshletcount_ = static_cast<uint32_t>(meshlets.size());
+        hasmeshlets = meshletcount_ > 0;
+        
+        if (!hasmeshlets)
+            return;
+        
+        // Create meshlet descriptor buffer
+        {
+            uint32_t meshletSize = sizeof(Meshlet);
+            VkDeviceSize buffsize = meshletSize * meshletcount_;
+            
+            VKBuffmanager::Buffmanager stagingBuffer {device_, meshletSize, meshletcount_, 
+                                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+            
+            stagingBuffer.map();
+            stagingBuffer.writeToBuffer((void*)meshlets.data());
+            
+            meshletbuff_ = std::make_unique<VKBuffmanager::Buffmanager>(
+                device_, meshletSize, meshletcount_, 
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            
+            device_.copyBuffer(stagingBuffer.getBuffer(), meshletbuff_->getBuffer(), buffsize);
+        }
+        
+        // Create meshlet vertices buffer
+        {
+            uint32_t vertexIndexCount = static_cast<uint32_t>(meshletVertices.size());
+            uint32_t vertexIndexSize = sizeof(uint32_t);
+            VkDeviceSize buffsize = vertexIndexSize * vertexIndexCount;
+            
+            VKBuffmanager::Buffmanager stagingBuffer {device_, vertexIndexSize, vertexIndexCount,
+                                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+            
+            stagingBuffer.map();
+            stagingBuffer.writeToBuffer((void*)meshletVertices.data());
+            
+            meshletverticesbuff_ = std::make_unique<VKBuffmanager::Buffmanager>(
+                device_, vertexIndexSize, vertexIndexCount,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            
+            device_.copyBuffer(stagingBuffer.getBuffer(), meshletverticesbuff_->getBuffer(), buffsize);
+        }
+        
+        // Create meshlet triangles buffer
+        {
+            uint32_t triangleIndexCount = static_cast<uint32_t>(meshletTriangles.size());
+            uint32_t triangleIndexSize = sizeof(uint8_t);
+            VkDeviceSize buffsize = triangleIndexSize * triangleIndexCount;
+            
+            VKBuffmanager::Buffmanager stagingBuffer {device_, triangleIndexSize, triangleIndexCount,
+                                                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT};
+            
+            stagingBuffer.map();
+            stagingBuffer.writeToBuffer((void*)meshletTriangles.data());
+            
+            meshlettrianglesbuff_ = std::make_unique<VKBuffmanager::Buffmanager>(
+                device_, triangleIndexSize, triangleIndexCount,
+                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            
+            device_.copyBuffer(stagingBuffer.getBuffer(), meshlettrianglesbuff_->getBuffer(), buffsize);
         }
     }
 
