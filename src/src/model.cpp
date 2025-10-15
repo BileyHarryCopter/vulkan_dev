@@ -67,6 +67,7 @@ namespace VKModel
         Builder builder{};
         builder.filepath_to_texture = filepath_to_texture;
         builder.load_models(filepath_to_model);
+        builder.generate_meshlets();  // Generate meshlets after loading the model
 
         return std::make_unique<Model> (device, builder);
     }
@@ -191,11 +192,11 @@ namespace VKModel
 
     void Model::draw_meshlets(VkCommandBuffer commandbuffer)
     {
-        if (hasmeshlets)
+        if (hasmeshlets && device_.vkCmdDrawMeshTasksEXT)
         {
             // Draw meshlets using mesh shader dispatch
             // Each workgroup processes one meshlet
-            vkCmdDrawMeshTasksEXT(commandbuffer, meshletcount_, 1, 1);
+            device_.vkCmdDrawMeshTasksEXT(commandbuffer, meshletcount_, 1, 1);
         }
     }
 

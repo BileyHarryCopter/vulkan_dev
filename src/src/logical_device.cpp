@@ -23,11 +23,18 @@ namespace VKDevice
         VkPhysicalDeviceFeatures  deviceFeatures{};
         deviceFeatures.samplerAnisotropy = VK_TRUE;
 
+        // Enable mesh shader features
+        VkPhysicalDeviceMeshShaderFeaturesEXT meshShaderFeatures{};
+        meshShaderFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT;
+        meshShaderFeatures.taskShader = VK_TRUE;
+        meshShaderFeatures.meshShader = VK_TRUE;
+
         VkDeviceCreateInfo createInfo{};
         createInfo.sType                   =                       VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.queueCreateInfoCount    =             static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos       =                                    queueCreateInfos.data();
         createInfo.pEnabledFeatures        =                                            &deviceFeatures;
+        createInfo.pNext                   =                                        &meshShaderFeatures;
         createInfo.enabledExtensionCount   =    static_cast<uint32_t>(instance.get_extensions().size());
         createInfo.ppEnabledExtensionNames =                           instance.get_extensions().data();
 

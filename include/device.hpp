@@ -40,7 +40,10 @@ class Device final
     VkCommandPool                    commandpool_;
 
     VkPhysicalDeviceProperties        properties_;
-    const std::vector<const char *> deviceExtensions_ = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    const std::vector<const char *> deviceExtensions_ = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_EXT_MESH_SHADER_EXTENSION_NAME
+    };
 
 public:
 
@@ -71,6 +74,9 @@ public:
     VkQueue  get_present_queue() {  return present_queue_; }
 
     VkPhysicalDeviceProperties get_properties () const { return properties_;}
+
+    // Mesh shader function pointer
+    PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT = nullptr;
 
     void createBuffer(VkDeviceSize size,VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                       VkBuffer &buffer, VkDeviceMemory &bufferMemory);

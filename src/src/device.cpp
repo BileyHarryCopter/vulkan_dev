@@ -8,6 +8,9 @@ namespace VKDevice
         pickPhysicalDevice(instance);
         createLogicalDevice(instance);
         createCommandPool();
+        
+        // Load mesh shader extension function
+        vkCmdDrawMeshTasksEXT = (PFN_vkCmdDrawMeshTasksEXT)vkGetDeviceProcAddr(logicdevice_, "vkCmdDrawMeshTasksEXT");
     }
 
     Device::~Device()
