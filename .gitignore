@@ -1,2 +1,19 @@
+# Build artifacts
 build/
+*.o
+*.so
+*.a
+
+# IDE
 .vscode/
+.idea/
+*.swp
+*.swo
+
+# Compiled shaders (keeping source but not binaries in some workflows)
+# Commented out since we want to keep them
+# *.spv
+
+# OS
+.DS_Store
+Thumbs.db
