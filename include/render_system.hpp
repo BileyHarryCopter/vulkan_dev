@@ -29,6 +29,10 @@ class RenderSystem
     std::unique_ptr<VKPipeline::Pipeline> pipeline_;
     VkPipelineLayout                pipelineLayout_;
 
+#ifdef USE_MESH_SHADING
+    PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT_ = nullptr;
+#endif
+
 public:
     RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
     ~RenderSystem();

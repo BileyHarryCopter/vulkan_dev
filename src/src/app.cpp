@@ -27,9 +27,14 @@ namespace VKEngine
 
 
         //  creating layout for GLOBAL set and it respectively
+#ifdef USE_MESH_SHADING
+        // For mesh shading, fragment shader doesn't use textures, so only UBO is needed
+        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1).build();
+#else
         auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1)
                                                                              .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
-        std::vector<VkDescriptorSet> descriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()); 
+#endif
+        std::vector<VkDescriptorSet> allDescriptorsets(VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size()); 
         int descriptorSetIndex = 0;
         for (int frame = 0; frame < VKSwapchain::MAX_FRAMES_IN_FLIGHT; frame++) 
         {
@@ -37,13 +42,26 @@ namespace VKEngine
 
             for (auto& obj : objects_)
             {
+#ifdef USE_MESH_SHADING
+                // For mesh shading, only UBO is needed (no textures)
+                if (descriptorSetIndex >= allDescriptorsets.size()) {
+                    throw std::runtime_error("Descriptor set index out of bounds!");
+                }
+                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).build(allDescriptorsets[descriptorSetIndex]);
+#else
+                if (!obj.model_) {
+                    throw std::runtime_error("Model is null for object!");
+                }
                 VkDescriptorImageInfo imageInfo{};
                 imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 imageInfo.imageView = obj.model_->getimgview();
                 imageInfo.sampler = obj.model_->getsampler();
 
-                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).writeImage(1, &imageInfo).build(descriptorsets[descriptorSetIndex]);
-
+                if (descriptorSetIndex >= allDescriptorsets.size()) {
+                    throw std::runtime_error("Descriptor set index out of bounds!");
+                }
+                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).writeImage(1, &imageInfo).build(allDescriptorsets[descriptorSetIndex]);
+#endif
                 descriptorSetIndex++;  // Increment the index explicitly
             }
         }
@@ -57,7 +75,21 @@ namespace VKEngine
         auto viewerObject =    VKObject::Object::createObject();
         VKKeyboardController::KeyboardController cameraController{};
 
+        // Debug: Log initial object information
+        std::cout << "Loaded " << objects_.size() << " objects" << std::endl;
+        if (objects_.size() > 0) {
+            std::cout << "First object position: (" 
+                      << objects_[0].transform3D_.translation.x << ", "
+                      << objects_[0].transform3D_.translation.y << ", "
+                      << objects_[0].transform3D_.translation.z << ")" << std::endl;
+            std::cout << "First object scale: (" 
+                      << objects_[0].transform3D_.scale.x << ", "
+                      << objects_[0].transform3D_.scale.y << ", "
+                      << objects_[0].transform3D_.scale.z << ")" << std::endl;
+        }
+
         auto currentTime = std::chrono::high_resolution_clock::now();
+        int frameCount = 0;
 
         while(!window_.shouldClose())
         {
@@ -73,20 +105,48 @@ namespace VKEngine
             float aspect = renderer_.getAspectRatio();
             camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 1000.f);
 
+            // Debug: Log camera position every 60 frames (approximately once per second at 60 FPS)
+            if (frameCount % 60 == 0) {
+                std::cout << "Camera position: (" 
+                          << viewerObject.transform3D_.translation.x << ", "
+                          << viewerObject.transform3D_.translation.y << ", "
+                          << viewerObject.transform3D_.translation.z << ")" << std::endl;
+                std::cout << "Camera rotation: (" 
+                          << viewerObject.transform3D_.rotation.x << ", "
+                          << viewerObject.transform3D_.rotation.y << ", "
+                          << viewerObject.transform3D_.rotation.z << ")" << std::endl;
+            }
+            frameCount++;
+
             if (auto commandBuffer = renderer_.beginFrame())
             {
                 int frameindex = renderer_.getframeindex();
 
-                std::vector<VkDescriptorSet> Descriptorsets {};
-                for (int i = 0, len = objects_.size(); i < objects_.size(); i++)
-                    descriptorsets.push_back(descriptorsets[len * frameindex + i]);
+                std::vector<VkDescriptorSet> descriptorsets {};
+                for (int i = 0, len = objects_.size(); i < objects_.size(); i++) {
+                    int descriptorIndex = len * frameindex + i;
+                    if (descriptorIndex >= allDescriptorsets.size()) {
+                        throw std::runtime_error("Descriptor set index out of bounds when building frame descriptors!");
+                    }
+                    descriptorsets.push_back(allDescriptorsets[descriptorIndex]);
+                }
                 
 
                 VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
 
                 //  update Ubo
                 GlobalUbo ubo{};
-                ubo.projectionView = camera.getProjection() * camera.getView();
+                ubo.projectionViewMatrix = camera.getProjection() * camera.getView();
+
+                // Debug: Log projection/view matrix info every 60 frames
+                if (frameCount % 60 == 1) {
+                    auto proj = camera.getProjection();
+                    auto view = camera.getView();
+                    std::cout << "Projection matrix (first row): (" 
+                              << proj[0][0] << ", " << proj[0][1] << ", " << proj[0][2] << ", " << proj[0][3] << ")" << std::endl;
+                    std::cout << "View matrix (first row): (" 
+                              << view[0][0] << ", " << view[0][1] << ", " << view[0][2] << ", " << view[0][3] << ")" << std::endl;
+                }
 
                 ubobuffs[frameindex]->writeToBuffer(&ubo);
                 ubobuffs[frameindex]->flush();

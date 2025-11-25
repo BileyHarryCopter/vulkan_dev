@@ -5,6 +5,13 @@ namespace VKDevice
 
     Device::Device(VKInstance::Instance &instance) : surface_{instance.get_surface()}
     {
+        // Initialize device extensions
+        deviceExtensions_ = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        
+#ifdef USE_MESH_SHADING
+        deviceExtensions_.push_back(VK_EXT_MESH_SHADER_EXTENSION_NAME);
+#endif
+
         pickPhysicalDevice(instance);
         createLogicalDevice(instance);
         createCommandPool();
