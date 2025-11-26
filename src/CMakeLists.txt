@@ -21,6 +21,13 @@ set (tinyobjloader_SRC
 
 target_link_libraries (VKSOURCES ${GLFW3_LIBRARIES} vulkan dl X11 Xxf86vm Xrandr Xi ${tinyobjloader_SRC})
 
+# Link meshoptimizer if mesh shading is enabled
+if(USE_MESH_SHADING)
+    target_link_libraries(VKSOURCES meshoptimizer)
+    target_include_directories(VKSOURCES PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../meshoptimizer/src)
+    message(STATUS "Linking meshoptimizer for mesh shading support")
+endif()
+
 # Pass USE_MESH_SHADING flag to the code
 target_compile_definitions(VKSOURCES PRIVATE $<$<BOOL:${USE_MESH_SHADING}>:USE_MESH_SHADING>)
 

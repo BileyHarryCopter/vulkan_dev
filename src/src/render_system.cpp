@@ -123,9 +123,15 @@ struct SimplePushConstantData
                                 pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
 
             // Mesh shaders don't use vertex/index buffers
-            // Draw one mesh task per object (local_size_x = 1 in mesh shader)
+            // Draw meshlets: one mesh task per meshlet in the model
             // Parameters: commandBuffer, groupCountX, groupCountY, groupCountZ
-            vkCmdDrawMeshTasksEXT_(frameinfo.commandbuffer_, 1, 1, 1);
+            uint32_t meshletCount = objects[object_index].model_->getMeshletCount();
+            if (meshletCount > 0) {
+                vkCmdDrawMeshTasksEXT_(frameinfo.commandbuffer_, meshletCount, 1, 1);
+            } else {
+                // Fallback: draw one mesh task if no meshlets (shouldn't happen)
+                vkCmdDrawMeshTasksEXT_(frameinfo.commandbuffer_, 1, 1, 1);
+            }
         }
 #else
         for (int object_index = 0; object_index < objects.size(); ++object_index)

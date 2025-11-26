@@ -28,8 +28,15 @@ namespace VKEngine
 
         //  creating layout for GLOBAL set and it respectively
 #ifdef USE_MESH_SHADING
-        // For mesh shading, fragment shader doesn't use textures, so only UBO is needed
-        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1).build();
+        // For mesh shading: UBO, textures, and storage buffers for meshlets
+        auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_)
+            .addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)
+            .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1)
+            .addBinding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // meshlet structures
+            .addBinding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // meshlet vertices
+            .addBinding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // meshlet triangles
+            .addBinding(5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_MESH_BIT_EXT, 1)  // vertex data
+            .build();
 #else
         auto setlayout = VKDescriptors::DescriptorSetLayout::Builder(device_).addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1)
                                                                              .addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1).build();
@@ -43,11 +50,42 @@ namespace VKEngine
             for (auto& obj : objects_)
             {
 #ifdef USE_MESH_SHADING
-                // For mesh shading, only UBO is needed (no textures)
+                // For mesh shading: UBO, textures, and storage buffers for meshlets
+                if (!obj.model_) {
+                    throw std::runtime_error("Model is null for object!");
+                }
                 if (descriptorSetIndex >= allDescriptorsets.size()) {
                     throw std::runtime_error("Descriptor set index out of bounds!");
                 }
-                VKDescriptors::DescriptorWriter(*setlayout, *globalPool).writeBuffer(0, &bufferInfo).build(allDescriptorsets[descriptorSetIndex]);
+                
+                // UBO (binding 0)
+                VkDescriptorImageInfo imageInfo{};
+                imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                imageInfo.imageView = obj.model_->getimgview();
+                imageInfo.sampler = obj.model_->getsampler();
+                
+                // Storage buffers for meshlets
+                VkDescriptorBufferInfo meshletBufferInfo = obj.model_->getMeshletBuffer() != VK_NULL_HANDLE ? 
+                    VkDescriptorBufferInfo{obj.model_->getMeshletBuffer(), 0, VK_WHOLE_SIZE} : 
+                    VkDescriptorBufferInfo{VK_NULL_HANDLE, 0, 0};
+                VkDescriptorBufferInfo meshletVerticesBufferInfo = obj.model_->getMeshletVerticesBuffer() != VK_NULL_HANDLE ?
+                    VkDescriptorBufferInfo{obj.model_->getMeshletVerticesBuffer(), 0, VK_WHOLE_SIZE} :
+                    VkDescriptorBufferInfo{VK_NULL_HANDLE, 0, 0};
+                VkDescriptorBufferInfo meshletTrianglesBufferInfo = obj.model_->getMeshletTrianglesBuffer() != VK_NULL_HANDLE ?
+                    VkDescriptorBufferInfo{obj.model_->getMeshletTrianglesBuffer(), 0, VK_WHOLE_SIZE} :
+                    VkDescriptorBufferInfo{VK_NULL_HANDLE, 0, 0};
+                VkDescriptorBufferInfo vertexDataBufferInfo = obj.model_->getVertexDataBuffer() != VK_NULL_HANDLE ?
+                    VkDescriptorBufferInfo{obj.model_->getVertexDataBuffer(), 0, VK_WHOLE_SIZE} :
+                    VkDescriptorBufferInfo{VK_NULL_HANDLE, 0, 0};
+                
+                VKDescriptors::DescriptorWriter writer(*setlayout, *globalPool);
+                writer.writeBuffer(0, &bufferInfo)  // UBO
+                      .writeImage(1, &imageInfo)    // Texture
+                      .writeBuffer(2, &meshletBufferInfo)  // Meshlet structures
+                      .writeBuffer(3, &meshletVerticesBufferInfo)  // Meshlet vertex indices
+                      .writeBuffer(4, &meshletTrianglesBufferInfo)  // Meshlet triangle indices
+                      .writeBuffer(5, &vertexDataBufferInfo);  // Vertex data
+                writer.build(allDescriptorsets[descriptorSetIndex]);
 #else
                 if (!obj.model_) {
                     throw std::runtime_error("Model is null for object!");
@@ -101,6 +139,14 @@ namespace VKEngine
 
             cameraController.moveInPlaneXZ(window_.get(), frameTime, viewerObject);
             camera.setViewYXZ(viewerObject.transform3D_.translation, viewerObject.transform3D_.rotation);
+
+            // Update rotation for all objects (synchronous rotation around Y axis)
+            const float rotationSpeed = 1.0f;  // radians per second
+            for (auto& obj : objects_) {
+                obj.transform3D_.rotation.y += rotationSpeed * frameTime;
+                // Keep rotation in [0, 2π) range to prevent overflow
+                obj.transform3D_.rotation.y = glm::mod(obj.transform3D_.rotation.y, glm::two_pi<float>());
+            }
 
             float aspect = renderer_.getAspectRatio();
             camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 1000.f);
@@ -165,22 +211,48 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-
+#ifdef USE_MESH_SHADING
+        // For mesh shading mode: load multiple Skull models in a grid (same as traditional pipeline)
+        // Models will be automatically converted to meshlets
         for (int i = 0; i < 10; i++)
         {
             for (int j = 0; j < 10; j++)
             {
-                std::shared_ptr<VKModel::Model> model_viking_room =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/viking_room.obj",
-                                                                                                            "../../src/src/assets/viking_room.png");
-                auto obj_viking_room                     =   VKObject::Object::createObject();
-                obj_viking_room.model_                   =                  model_viking_room;
-                obj_viking_room.transform3D_.translation =         {i * 2.0f, j * 2.0f, 0.0f};
-                obj_viking_room.transform3D_.scale       =                    glm::vec3{0.8f};
-                obj_viking_room.transform3D_.rotation    =               {1.57f, 1.57f, 0.0f};
+                std::shared_ptr<VKModel::Model> model_skull = VKModel::Model::createModelfromFile(
+                    device_,
+                    "../../src/src/assets/Skull/Skull.obj",
+                    "../../src/src/assets/Skull/Skull.jpg"
+                );
+                auto obj_skull = VKObject::Object::createObject();
+                obj_skull.model_ = model_skull;
+                obj_skull.transform3D_.translation = {i * 20.0f, j * 20.0f, 0.0f};
+                obj_skull.transform3D_.scale = glm::vec3{0.8f};
+                obj_skull.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
+
+                objects_.push_back(std::move(obj_skull));
+            }
+        }
+#else
+        // For traditional vertex/fragment pipeline: load multiple Skull models in a grid
+        for (int i = 0; i < 10; i++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                std::shared_ptr<VKModel::Model> model_viking_room = VKModel::Model::createModelfromFile(
+                    device_,
+                    "../../src/src/assets/Skull/Skull.obj",
+                    "../../src/src/assets/Skull/Skull.jpg"
+                );
+                auto obj_viking_room = VKObject::Object::createObject();
+                obj_viking_room.model_ = model_viking_room;
+                obj_viking_room.transform3D_.translation = {i * 20.0f, j * 20.0f, 0.0f};
+                obj_viking_room.transform3D_.scale = glm::vec3{0.8f};
+                obj_viking_room.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
 
                 objects_.push_back(std::move(obj_viking_room));
             }
         }
+#endif
 
 
 

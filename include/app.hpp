@@ -43,9 +43,11 @@ public:
         loadObjects();
 
 #ifdef USE_MESH_SHADING
-        // For mesh shading, only UBO is needed (no textures)
+        // For mesh shading: UBO, textures, and storage buffers for meshlets
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size())
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size() * 4).build();  // 4 storage buffers per object
 #else
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool

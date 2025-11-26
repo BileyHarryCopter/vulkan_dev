@@ -110,6 +110,12 @@ set(CMAKE_CXX_EXTENSIONS        OFF)
 # Option to enable mesh shading support
 option(USE_MESH_SHADING "Enable mesh shading pipeline (requires VK_EXT_mesh_shader)" OFF)
 
+# Add meshoptimizer submodule if mesh shading is enabled
+if(USE_MESH_SHADING)
+    add_subdirectory(meshoptimizer)
+    message(STATUS "Mesh shading enabled - meshoptimizer will be built")
+endif()
+
 include_directories(./include/)
 
 add_subdirectory(src)
