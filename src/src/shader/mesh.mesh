@@ -104,9 +104,22 @@ Vertex readVertex(uint vertexIndex) {
 
 const float AMBIENT = 0.02;
 
+// Array of 6 colors for meshlet coloring (index modulo 6)
+const vec3 MESHLET_COLORS[6] = vec3[](
+    vec3(1.0, 0.0, 0.0),  // 0: Red
+    vec3(0.0, 1.0, 0.0),  // 1: Green
+    vec3(0.0, 0.0, 1.0),  // 2: Blue
+    vec3(1.0, 1.0, 0.0),  // 3: Yellow
+    vec3(1.0, 0.0, 1.0),  // 4: Magenta/Purple
+    vec3(0.0, 1.0, 1.0)   // 5: Cyan
+);
+
 void main() {
     // Get current meshlet index from work group ID
     uint meshletIndex = gl_WorkGroupID.x;
+    
+    // Select color based on meshlet index modulo 6
+    vec3 meshletColor = MESHLET_COLORS[meshletIndex % 6u];
     
     // Read meshlet data
     Meshlet meshlet = meshlets[meshletIndex];
@@ -145,9 +158,8 @@ void main() {
         vec3 normalWorldSpace = normalize(mat3(push.normalMatrix) * vertex.normal);
         float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0);
         
-        // For textured models, pass only light intensity (not multiplied by vertex color)
-        // The fragment shader will apply lighting to the texture
-        fragColor[i] = vec3(lightIntensity);
+        // Apply meshlet color (based on index modulo 6) multiplied by lighting
+        fragColor[i] = meshletColor * lightIntensity;
         fragTexCoord[i] = vertex.uv;
     }
     

@@ -212,26 +212,20 @@ namespace VKEngine
     void App::loadObjects()
     {
 #ifdef USE_MESH_SHADING
-        // For mesh shading mode: load multiple Skull models in a grid (same as traditional pipeline)
-        // Models will be automatically converted to meshlets
-        for (int i = 0; i < 10; i++)
-        {
-            for (int j = 0; j < 10; j++)
-            {
-                std::shared_ptr<VKModel::Model> model_skull = VKModel::Model::createModelfromFile(
-                    device_,
-                    "../../src/src/assets/Skull/Skull.obj",
-                    "../../src/src/assets/Skull/Skull.jpg"
-                );
-                auto obj_skull = VKObject::Object::createObject();
-                obj_skull.model_ = model_skull;
-                obj_skull.transform3D_.translation = {i * 20.0f, j * 20.0f, 0.0f};
-                obj_skull.transform3D_.scale = glm::vec3{0.8f};
-                obj_skull.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
+        // For mesh shading mode: load single Skull model without texture
+        // Model will be automatically converted to meshlets and colored by index modulo 6
+        std::shared_ptr<VKModel::Model> model_skull = VKModel::Model::createModelfromFile(
+            device_,
+            "../../src/src/assets/Skull/Skull.obj",
+            ""  // Empty texture path - no texture will be loaded
+        );
+        auto obj_skull = VKObject::Object::createObject();
+        obj_skull.model_ = model_skull;
+        obj_skull.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+        obj_skull.transform3D_.scale = glm::vec3{0.8f};
+        obj_skull.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
 
-                objects_.push_back(std::move(obj_skull));
-            }
-        }
+        objects_.push_back(std::move(obj_skull));
 #else
         // For traditional vertex/fragment pipeline: load multiple Skull models in a grid
         for (int i = 0; i < 10; i++)

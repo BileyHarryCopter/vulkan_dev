@@ -43,6 +43,12 @@ namespace VKModel
             createTextureImageView();
             createTextureSampler  ();
         }
+        else
+        {
+            // Create dummy texture (1x1 white pixel) when no texture is provided
+            // This ensures descriptor sets always have valid handles
+            createDummyTexture();
+        }
         createVertexBuffer    (builder.vertices);
         createIndexBuffer     (builder.indices);
         
@@ -58,11 +64,18 @@ namespace VKModel
 
     Model::~Model()
     {
-        vkDestroySampler  (device_.get_logic(), texturesampler_, nullptr);
-        vkDestroyImageView(device_.get_logic(), textureimgview_, nullptr);
-
-        vkDestroyImage(device_.get_logic(),    textureimg_, nullptr);
-        vkFreeMemory  (device_.get_logic(), textureimgmem_, nullptr);
+        if (texturesampler_ != VK_NULL_HANDLE) {
+            vkDestroySampler(device_.get_logic(), texturesampler_, nullptr);
+        }
+        if (textureimgview_ != VK_NULL_HANDLE) {
+            vkDestroyImageView(device_.get_logic(), textureimgview_, nullptr);
+        }
+        if (textureimg_ != VK_NULL_HANDLE) {
+            vkDestroyImage(device_.get_logic(), textureimg_, nullptr);
+        }
+        if (textureimgmem_ != VK_NULL_HANDLE) {
+            vkFreeMemory(device_.get_logic(), textureimgmem_, nullptr);
+        }
     }
 
     std::unique_ptr<Model> Model::createModelfromFile (VKDevice::Device& device,const std::string& filepath_to_model, 
@@ -136,6 +149,43 @@ namespace VKModel
 
         if (vkCreateSampler(device_.get_logic(), &samplerInfo, nullptr, &texturesampler_) != VK_SUCCESS)
             throw std::runtime_error("failed to create texture sampler!");
+    }
+
+    void Model::createDummyTexture()
+    {
+        // Create a 1x1 white RGBA texture (4 bytes: 255, 255, 255, 255)
+        const uint32_t texWidth = 1;
+        const uint32_t texHeight = 1;
+        const VkDeviceSize imageSize = 4; // 1 pixel * 4 channels (RGBA)
+        
+        // White pixel data (RGBA)
+        uint8_t pixels[4] = {255, 255, 255, 255};
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        device_.createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+                     stagingBuffer, stagingBufferMemory);
+        
+        void* mapping_data;
+        vkMapMemory(device_.get_logic(), stagingBufferMemory, 0, imageSize, 0, &mapping_data);
+        memcpy(mapping_data, pixels, static_cast<size_t>(imageSize));
+        vkUnmapMemory(device_.get_logic(), stagingBufferMemory);
+
+        device_.createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL,
+                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                     textureimg_, textureimgmem_);
+
+        device_.transitionImageLayout(textureimg_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        device_.copyBufferToImage(stagingBuffer, textureimg_, texWidth, texHeight);
+        device_.transitionImageLayout(textureimg_, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        vkDestroyBuffer(device_.get_logic(), stagingBuffer, nullptr);
+        vkFreeMemory(device_.get_logic(), stagingBufferMemory, nullptr);
+
+        // Create image view and sampler
+        createTextureImageView();
+        createTextureSampler();
     }
 
     void Model::createVertexBuffer(const std::vector<Vertex>& vertices)
@@ -318,119 +368,122 @@ namespace VKModel
 #ifdef USE_MESH_SHADING
     void Model::buildMeshlets(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices)
     {
-        // Simple meshlet building algorithm without meshoptimizer
-        // This gives us full control over the data format for debugging
-        
+        // Use meshoptimizer for efficient meshlet generation with spatial optimization
         const size_t max_vertices = 64;
         const size_t max_triangles = 124;
+        const float cone_weight = 0.5f;  // Balance between cluster size and cone culling efficiency
         
-        // Reserve space (worst case: one meshlet per triangle)
-        size_t triangle_count = indices.size() / 3;
-        meshlet_data_.meshlets.reserve(triangle_count);
-        meshlet_data_.meshlet_vertices.reserve(indices.size());
-        meshlet_data_.meshlet_triangles.reserve(triangle_count);  // Each uint32_t contains one triangle (3 bytes)
+        // Calculate worst case bounds for meshlet data
+        size_t max_meshlets = meshopt_buildMeshletsBound(indices.size(), max_vertices, max_triangles);
         
-        // Current meshlet state
-        meshopt_Meshlet current_meshlet = {};
-        current_meshlet.vertex_offset = 0;
-        current_meshlet.triangle_offset = 0;
-        current_meshlet.vertex_count = 0;
-        current_meshlet.triangle_count = 0;
+        // Temporary buffers for meshoptimizer output (uses unsigned char for triangles)
+        std::vector<meshopt_Meshlet> temp_meshlets(max_meshlets);
+        std::vector<unsigned int> temp_meshlet_vertices(indices.size());
+        std::vector<unsigned char> temp_meshlet_triangles(indices.size());  // meshoptimizer uses unsigned char
         
-        // Map from global vertex index to local meshlet vertex index
-        std::unordered_map<uint32_t, uint8_t> vertex_map;
+        // Extract vertex positions for meshoptimizer (first 12 bytes of each vertex)
+        std::vector<float> vertex_positions;
+        vertex_positions.reserve(vertices.size() * 3);
+        for (const auto& v : vertices) {
+            vertex_positions.push_back(v.position.x);
+            vertex_positions.push_back(v.position.y);
+            vertex_positions.push_back(v.position.z);
+        }
         
-        // Process triangles
-        for (size_t i = 0; i < triangle_count; ++i)
-        {
-            uint32_t v0 = indices[i * 3 + 0];
-            uint32_t v1 = indices[i * 3 + 1];
-            uint32_t v2 = indices[i * 3 + 2];
+        // Build meshlets using meshoptimizer
+        size_t meshlet_count = meshopt_buildMeshlets(
+            temp_meshlets.data(),
+            temp_meshlet_vertices.data(),
+            temp_meshlet_triangles.data(),
+            indices.data(),
+            indices.size(),
+            vertex_positions.data(),
+            vertices.size(),
+            sizeof(float) * 3,  // stride: 3 floats per position
+            max_vertices,
+            max_triangles,
+            cone_weight
+        );
+        
+        // Resize to actual meshlet count
+        temp_meshlets.resize(meshlet_count);
+        
+        // Optimize each meshlet for better vertex/triangle locality
+        for (size_t i = 0; i < meshlet_count; ++i) {
+            auto& m = temp_meshlets[i];
+            meshopt_optimizeMeshlet(
+                &temp_meshlet_vertices[m.vertex_offset],
+                &temp_meshlet_triangles[m.triangle_offset],
+                m.triangle_count,
+                m.vertex_count
+            );
+        }
+        
+        // Trim meshlet data arrays to actual size
+        if (meshlet_count > 0) {
+            const auto& last = temp_meshlets[meshlet_count - 1];
+            temp_meshlet_vertices.resize(last.vertex_offset + last.vertex_count);
+            temp_meshlet_triangles.resize(last.triangle_offset + last.triangle_count * 3);
+        }
+        
+        // Convert meshlet triangles from unsigned char[3] format to uint32_t format
+        // meshoptimizer stores triangles as 3 consecutive bytes, we pack them into uint32_t
+        meshlet_data_.meshlets = std::move(temp_meshlets);
+        meshlet_data_.meshlet_vertices = std::move(temp_meshlet_vertices);
+        meshlet_data_.meshlet_triangles.clear();
+        meshlet_data_.meshlet_triangles.reserve(meshlet_count * max_triangles);
+        
+        // Convert triangle format: unsigned char[3] -> uint32_t (packed)
+        for (size_t i = 0; i < meshlet_count; ++i) {
+            const auto& m = meshlet_data_.meshlets[i];
             
-            // Count how many new vertices this triangle would add
-            size_t new_vertices = 0;
-            if (vertex_map.find(v0) == vertex_map.end()) new_vertices++;
-            if (vertex_map.find(v1) == vertex_map.end()) new_vertices++;
-            if (vertex_map.find(v2) == vertex_map.end()) new_vertices++;
+            // Save original triangle_offset (in bytes) before updating
+            // This is needed to read from temp_meshlet_triangles which uses byte offsets
+            size_t original_triangle_offset_bytes = m.triangle_offset;
             
-            // Check if we need to start a new meshlet
-            bool need_new_meshlet = (current_meshlet.vertex_count + new_vertices > max_vertices) ||
-                                    (current_meshlet.triangle_count >= max_triangles);
+            // Calculate new triangle_offset (in uint32_t units) for the converted format
+            uint32_t new_triangle_offset = static_cast<uint32_t>(meshlet_data_.meshlet_triangles.size());
             
-            if (need_new_meshlet && current_meshlet.triangle_count > 0)
-            {
-                // Save current meshlet and start a new one
-                meshlet_data_.meshlets.push_back(current_meshlet);
+            // Update triangle_offset in meshlet (now in uint32_t units, not bytes)
+            meshlet_data_.meshlets[i].triangle_offset = new_triangle_offset;
+            
+            // Convert triangles for this meshlet
+            // Use original_triangle_offset_bytes to read from temp_meshlet_triangles
+            for (size_t t = 0; t < m.triangle_count; ++t) {
+                size_t byte_offset = original_triangle_offset_bytes + t * 3;
+                uint8_t i0 = temp_meshlet_triangles[byte_offset + 0];
+                uint8_t i1 = temp_meshlet_triangles[byte_offset + 1];
+                uint8_t i2 = temp_meshlet_triangles[byte_offset + 2];
                 
-                // Update offsets for next meshlet
-                // Note: triangle_offset is now in uint32_t units, not bytes
-                current_meshlet.vertex_offset = meshlet_data_.meshlet_vertices.size();
-                current_meshlet.triangle_offset = meshlet_data_.meshlet_triangles.size();
-                current_meshlet.vertex_count = 0;
-                current_meshlet.triangle_count = 0;
-                vertex_map.clear();
+                // Pack into uint32_t: (i0) | (i1 << 8) | (i2 << 16)
+                uint32_t packed = static_cast<uint32_t>(i0) | 
+                                  (static_cast<uint32_t>(i1) << 8) | 
+                                  (static_cast<uint32_t>(i2) << 16);
+                meshlet_data_.meshlet_triangles.push_back(packed);
             }
-            
-            // Add vertices to current meshlet (if not already present)
-            uint8_t local_v0, local_v1, local_v2;
-            
-            if (vertex_map.find(v0) == vertex_map.end())
-            {
-                local_v0 = current_meshlet.vertex_count;
-                vertex_map[v0] = local_v0;
-                meshlet_data_.meshlet_vertices.push_back(v0);
-                current_meshlet.vertex_count++;
-            }
-            else
-            {
-                local_v0 = vertex_map[v0];
-            }
-            
-            if (vertex_map.find(v1) == vertex_map.end())
-            {
-                local_v1 = current_meshlet.vertex_count;
-                vertex_map[v1] = local_v1;
-                meshlet_data_.meshlet_vertices.push_back(v1);
-                current_meshlet.vertex_count++;
-            }
-            else
-            {
-                local_v1 = vertex_map[v1];
-            }
-            
-            if (vertex_map.find(v2) == vertex_map.end())
-            {
-                local_v2 = current_meshlet.vertex_count;
-                vertex_map[v2] = local_v2;
-                meshlet_data_.meshlet_vertices.push_back(v2);
-                current_meshlet.vertex_count++;
-            }
-            else
-            {
-                local_v2 = vertex_map[v2];
-            }
-            
-            // Add triangle with local indices, packed into uint32_t
-            // Format: uint32_t = (i0) | (i1 << 8) | (i2 << 16)
-            uint32_t packed_triangle = static_cast<uint32_t>(local_v0) | 
-                                       (static_cast<uint32_t>(local_v1) << 8) | 
-                                       (static_cast<uint32_t>(local_v2) << 16);
-            meshlet_data_.meshlet_triangles.push_back(packed_triangle);
-            current_meshlet.triangle_count++;
         }
         
-        // Don't forget the last meshlet
-        if (current_meshlet.triangle_count > 0)
-        {
-            meshlet_data_.meshlets.push_back(current_meshlet);
-        }
+        meshlet_data_.meshlet_count = static_cast<uint32_t>(meshlet_count);
         
-        meshlet_data_.meshlet_count = meshlet_data_.meshlets.size();
-        
-        std::cout << "Built " << meshlet_data_.meshlet_count << " meshlets from " 
+        // Debug output
+        std::cout << "Built " << meshlet_data_.meshlet_count << " meshlets using meshoptimizer from " 
                   << vertices.size() << " vertices and " << indices.size() << " indices" << std::endl;
         std::cout << "  - Total meshlet vertices: " << meshlet_data_.meshlet_vertices.size() << std::endl;
         std::cout << "  - Total meshlet triangles: " << meshlet_data_.meshlet_triangles.size() << std::endl;
+        
+        // Calculate average fill efficiency
+        if (meshlet_count > 0) {
+            size_t total_vertices = 0;
+            size_t total_triangles = 0;
+            for (const auto& m : meshlet_data_.meshlets) {
+                total_vertices += m.vertex_count;
+                total_triangles += m.triangle_count;
+            }
+            float avg_vertex_fill = (total_vertices * 100.0f) / (meshlet_count * max_vertices);
+            float avg_triangle_fill = (total_triangles * 100.0f) / (meshlet_count * max_triangles);
+            std::cout << "  - Average vertex fill: " << avg_vertex_fill << "%" << std::endl;
+            std::cout << "  - Average triangle fill: " << avg_triangle_fill << "%" << std::endl;
+        }
         
         // Debug: print first meshlet details
         if (meshlet_data_.meshlet_count > 0)
