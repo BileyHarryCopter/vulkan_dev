@@ -1,9 +1,11 @@
 #include "swapchain.hpp"
 
 #include "model.hpp"
+#include "utility.hpp"
 
 #include <limits>
 #include <algorithm>
+#include <sstream>
 
 namespace VKSwapchain
 {
@@ -298,8 +300,45 @@ namespace VKSwapchain
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = device_.findMemoryType(device_.get_phys(), memRequirements.memoryTypeBits, properties);
 
-        if (vkAllocateMemory(device_.get_logic(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS)
-            throw std::runtime_error("failed to allocate image memory!");
+        VkResult result = vkAllocateMemory(device_.get_logic(), &allocInfo, nullptr, &imageMemory);
+        if (result != VK_SUCCESS) {
+            // Get memory info for detailed error message
+            VKDevice::Device::MemoryInfo memInfo = device_.getMemoryInfo();
+            VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+            
+            std::ostringstream errorMsg;
+            errorMsg << "failed to allocate image memory!" << std::endl;
+            errorMsg << "  Requested size: " << (memRequirements.size / (1024 * 1024)) << " MB (" 
+                     << (memRequirements.size / 1024) << " KB)" << std::endl;
+            errorMsg << "  Image dimensions: " << imageInfo.extent.width << "x" << imageInfo.extent.height << "x" << imageInfo.extent.depth << std::endl;
+            errorMsg << "  Image format: " << imageInfo.format << std::endl;
+            errorMsg << "  Memory type index: " << allocInfo.memoryTypeIndex << std::endl;
+            
+            // Find which heap this memory type belongs to
+            VkPhysicalDeviceMemoryProperties memProperties;
+            vkGetPhysicalDeviceMemoryProperties(device_.get_phys(), &memProperties);
+            if (allocInfo.memoryTypeIndex < memProperties.memoryTypeCount) {
+                uint32_t heapIndex = memProperties.memoryTypes[allocInfo.memoryTypeIndex].heapIndex;
+                if (heapIndex < memInfo.heaps.size()) {
+                    const auto& heap = memInfo.heaps[heapIndex];
+                    errorMsg << "  Heap " << heapIndex << " (" 
+                             << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                    errorMsg << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                             << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                    errorMsg << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+                }
+            }
+            
+            if (sysMemInfo.isValid) {
+                errorMsg << "  System RAM:" << std::endl;
+                errorMsg << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                         << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                errorMsg << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                errorMsg << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+            }
+            
+            throw std::runtime_error(errorMsg.str());
+        }
 
         if (vkBindImageMemory(device_.get_logic(), image, imageMemory, 0) != VK_SUCCESS)
             throw std::runtime_error("failed to bind image memory!");

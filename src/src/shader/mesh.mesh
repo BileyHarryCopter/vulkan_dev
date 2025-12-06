@@ -104,22 +104,9 @@ Vertex readVertex(uint vertexIndex) {
 
 const float AMBIENT = 0.02;
 
-// Array of 6 colors for meshlet coloring (index modulo 6)
-const vec3 MESHLET_COLORS[6] = vec3[](
-    vec3(1.0, 0.0, 0.0),  // 0: Red
-    vec3(0.0, 1.0, 0.0),  // 1: Green
-    vec3(0.0, 0.0, 1.0),  // 2: Blue
-    vec3(1.0, 1.0, 0.0),  // 3: Yellow
-    vec3(1.0, 0.0, 1.0),  // 4: Magenta/Purple
-    vec3(0.0, 1.0, 1.0)   // 5: Cyan
-);
-
 void main() {
     // Get current meshlet index from work group ID
     uint meshletIndex = gl_WorkGroupID.x;
-    
-    // Select color based on meshlet index modulo 6
-    vec3 meshletColor = MESHLET_COLORS[meshletIndex % 6u];
     
     // Read meshlet data
     Meshlet meshlet = meshlets[meshletIndex];
@@ -133,34 +120,55 @@ void main() {
     
     SetMeshOutputsEXT(vertexCount, triangleCount);
     
+    // Pre-compute normal matrix transform (mat3x3 for optimization)
+    mat3 normalMatrix3 = mat3(push.normalMatrix);
+    
     // Emit vertices from meshlet
     // meshlet_vertices contains GLOBAL vertex indices (pointing to vertexData[] array)
     // These indices are stored per meshlet and reference the full vertex buffer
-    // Calculate max vertex index based on buffer size (vertexData is float array, each vertex is 11 floats)
-    uint maxVertexIndex = (vertexData.length() / VERTEX_SIZE_FLOATS) - 1u;
-    
     for (uint i = 0; i < vertexCount; i++) {
         // Get global vertex index from meshlet_vertices buffer
         // meshlet.vertex_offset is the offset into meshlet_vertices array for this meshlet
         uint globalVertexIndex = meshlet_vertices[meshlet.vertex_offset + i];
         
-        // Clamp vertex index to prevent out-of-bounds access
-        // Note: This is a safety check, indices should be valid
-        uint safeVertexIndex = min(globalVertexIndex, maxVertexIndex);
-        
         // Read vertex data using explicit byte offsets (ensures exact C++ layout match)
-        Vertex vertex = readVertex(safeVertexIndex);
+        // Optimized: calculate float offset directly without clamping (indices are validated during meshlet creation)
+        uint floatOffset = globalVertexIndex * VERTEX_SIZE_FLOATS;
+        
+        // Direct array access (faster than function call)
+        vec3 position = vec3(
+            vertexData[floatOffset + 0u],
+            vertexData[floatOffset + 1u],
+            vertexData[floatOffset + 2u]
+        );
+        
+        vec3 color = vec3(
+            vertexData[floatOffset + 3u],
+            vertexData[floatOffset + 4u],
+            vertexData[floatOffset + 5u]
+        );
+        
+        vec3 normal = vec3(
+            vertexData[floatOffset + 6u],
+            vertexData[floatOffset + 7u],
+            vertexData[floatOffset + 8u]
+        );
+        
+        vec2 uv = vec2(
+            vertexData[floatOffset + 9u],
+            vertexData[floatOffset + 10u]
+        );
         
         // Transform position
-        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * push.modelMatrix * vec4(vertex.position, 1.0);
+        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * push.modelMatrix * vec4(position, 1.0);
         
-        // Transform normal and calculate lighting
-        vec3 normalWorldSpace = normalize(mat3(push.normalMatrix) * vertex.normal);
-        float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0);
+        // Transform normal and calculate lighting (use pre-computed normalMatrix3)
+        vec3 normalWorldSpace = normalize(normalMatrix3 * normal);
+        float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0.0);
         
-        // Apply meshlet color (based on index modulo 6) multiplied by lighting
-        fragColor[i] = meshletColor * lightIntensity;
-        fragTexCoord[i] = vertex.uv;
+        // Apply lighting to vertex color
+        fragColor[i] = lightIntensity * color;
+        fragTexCoord[i] = uv;
     }
     
     // Emit primitives from meshlet triangles
@@ -182,13 +190,7 @@ void main() {
         uint i1 = (packed >> 8u) & 0xFFu;           // Byte 1: bits 8-15
         uint i2 = (packed >> 16u) & 0xFFu;          // Byte 2: bits 16-23
         
-        // Validate indices are within valid range (local to meshlet: 0 to vertexCount-1)
-        // These indices reference the local vertex array we just emitted
-        // Clamp to valid range to prevent out-of-bounds access
-        i0 = min(i0, vertexCount - 1u);
-        i1 = min(i1, vertexCount - 1u);
-        i2 = min(i2, vertexCount - 1u);
-        
+        // Indices are validated during meshlet creation, so no need for runtime bounds checking
         gl_PrimitiveTriangleIndicesEXT[i] = uvec3(i0, i1, i2);
     }
 }

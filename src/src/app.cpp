@@ -1,6 +1,7 @@
 #include "app.hpp"
 
 #include "render_system.hpp"
+#include "utility.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -10,6 +11,8 @@
 #include <array>
 #include <cassert>
 #include <stdexcept>
+#include <string>
+#include <iomanip>
 
 namespace VKEngine
 {
@@ -111,6 +114,8 @@ namespace VKEngine
         VKCamera::Camera camera{};
 
         auto viewerObject =    VKObject::Object::createObject();
+        viewerObject.transform3D_.translation = {0.0f, 48000.0f, -42000.0f};
+        viewerObject.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
         VKKeyboardController::KeyboardController cameraController{};
 
         // Debug: Log initial object information
@@ -129,168 +134,361 @@ namespace VKEngine
         auto currentTime = std::chrono::high_resolution_clock::now();
         int frameCount = 0;
 
-        while(!window_.shouldClose())
-        {
-            glfwPollEvents();
-
-            auto newTime = std::chrono::high_resolution_clock::now();
-            float frameTime = std::chrono::duration<float, std::chrono::seconds::period>(newTime - currentTime).count();
-            currentTime = newTime;
-
-            cameraController.moveInPlaneXZ(window_.get(), frameTime, viewerObject);
-            camera.setViewYXZ(viewerObject.transform3D_.translation, viewerObject.transform3D_.rotation);
-
-            // Update rotation for all objects (synchronous rotation around Y axis)
-            const float rotationSpeed = 1.0f;  // radians per second
-            for (auto& obj : objects_) {
-                obj.transform3D_.rotation.y += rotationSpeed * frameTime;
-                // Keep rotation in [0, 2π) range to prevent overflow
-                obj.transform3D_.rotation.y = glm::mod(obj.transform3D_.rotation.y, glm::two_pi<float>());
-            }
-
-            float aspect = renderer_.getAspectRatio();
-            camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 1000.f);
-
-            // Debug: Log camera position every 60 frames (approximately once per second at 60 FPS)
-            if (frameCount % 60 == 0) {
-                std::cout << "Camera position: (" 
-                          << viewerObject.transform3D_.translation.x << ", "
-                          << viewerObject.transform3D_.translation.y << ", "
-                          << viewerObject.transform3D_.translation.z << ")" << std::endl;
-                std::cout << "Camera rotation: (" 
-                          << viewerObject.transform3D_.rotation.x << ", "
-                          << viewerObject.transform3D_.rotation.y << ", "
-                          << viewerObject.transform3D_.rotation.z << ")" << std::endl;
-            }
-            frameCount++;
-
-            if (auto commandBuffer = renderer_.beginFrame())
+        try {
+            while(!window_.shouldClose())
             {
-                int frameindex = renderer_.getframeindex();
+                try {
+                    glfwPollEvents();
 
-                std::vector<VkDescriptorSet> descriptorsets {};
-                for (int i = 0, len = objects_.size(); i < objects_.size(); i++) {
-                    int descriptorIndex = len * frameindex + i;
-                    if (descriptorIndex >= allDescriptorsets.size()) {
-                        throw std::runtime_error("Descriptor set index out of bounds when building frame descriptors!");
+                    auto newTime = std::chrono::high_resolution_clock::now();
+                    float frameTime = std::chrono::duration<float, std::chrono::seconds::period>(newTime - currentTime).count();
+                    currentTime = newTime;
+
+                    cameraController.moveInPlaneXZ(window_.get(), frameTime, viewerObject);
+                    camera.setViewYXZ(viewerObject.transform3D_.translation, viewerObject.transform3D_.rotation);
+
+                    float aspect = renderer_.getAspectRatio();
+                    camera.setPerspectiveProjection(glm::radians(50.f), aspect, 0.1f, 100000.f);
+
+                    // Debug: Log camera position every 60 frames (approximately once per second at 60 FPS)
+                    if (frameCount % 60 == 0) {
+                        std::cout << "Camera position: (" 
+                                  << viewerObject.transform3D_.translation.x << ", "
+                                  << viewerObject.transform3D_.translation.y << ", "
+                                  << viewerObject.transform3D_.translation.z << ")" << std::endl;
+                        std::cout << "Camera rotation: (" 
+                                  << viewerObject.transform3D_.rotation.x << ", "
+                                  << viewerObject.transform3D_.rotation.y << ", "
+                                  << viewerObject.transform3D_.rotation.z << ")" << std::endl;
                     }
-                    descriptorsets.push_back(allDescriptorsets[descriptorIndex]);
+                    frameCount++;
+
+                    if (auto commandBuffer = renderer_.beginFrame())
+                    {
+                        int frameindex = renderer_.getframeindex();
+
+                        std::vector<VkDescriptorSet> descriptorsets {};
+                        for (int i = 0, len = objects_.size(); i < objects_.size(); i++) {
+                            int descriptorIndex = len * frameindex + i;
+                            if (descriptorIndex >= allDescriptorsets.size()) {
+                                throw std::runtime_error("Descriptor set index out of bounds when building frame descriptors!");
+                            }
+                            descriptorsets.push_back(allDescriptorsets[descriptorIndex]);
+                        }
+                        
+
+                        VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
+
+                        //  update Ubo
+                        GlobalUbo ubo{};
+                        ubo.projectionViewMatrix = camera.getProjection() * camera.getView();
+
+                        // Debug: Log projection/view matrix info every 60 frames
+                        if (frameCount % 60 == 1) {
+                            auto proj = camera.getProjection();
+                            auto view = camera.getView();
+                            std::cout << "Projection matrix (first row): (" 
+                                      << proj[0][0] << ", " << proj[0][1] << ", " << proj[0][2] << ", " << proj[0][3] << ")" << std::endl;
+                            std::cout << "View matrix (first row): (" 
+                                      << view[0][0] << ", " << view[0][1] << ", " << view[0][2] << ", " << view[0][3] << ")" << std::endl;
+                        }
+
+                        ubobuffs[frameindex]->writeToBuffer(&ubo);
+                        ubobuffs[frameindex]->flush();
+
+                        //  renderer
+                        renderer_.beginSwapchainRenderpass(commandBuffer);
+                        renderSystem.renderObjects(frameinfo, objects_);
+                        renderer_.endSwapchainRenderpass(commandBuffer);
+                        renderer_.endFrame();
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "\n=== RENDER LOOP ERROR (Frame " << frameCount << ") ===" << std::endl;
+                    std::cerr << "Error: " << e.what() << std::endl;
+                    std::cerr << "Attempting to gracefully shut down..." << std::endl;
+                    
+                    // Print current memory state
+                    VKDevice::Device::MemoryInfo memInfo = device_.getMemoryInfo();
+                    VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+                    
+                    std::cerr << "\nCurrent Memory State:" << std::endl;
+                    for (size_t i = 0; i < memInfo.heaps.size(); ++i) {
+                        const auto& heap = memInfo.heaps[i];
+                        std::cerr << "  Heap " << i << " (" 
+                                 << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                        std::cerr << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                                 << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                        std::cerr << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+                    }
+                    
+                    if (sysMemInfo.isValid) {
+                        std::cerr << "  System RAM:" << std::endl;
+                        std::cerr << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                                 << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                        std::cerr << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                        std::cerr << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+                    }
+                    std::cerr << "==========================================\n" << std::endl;
+                    
+                    // Break out of the loop to allow cleanup
+                    break;
                 }
-                
-
-                VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
-
-                //  update Ubo
-                GlobalUbo ubo{};
-                ubo.projectionViewMatrix = camera.getProjection() * camera.getView();
-
-                // Debug: Log projection/view matrix info every 60 frames
-                if (frameCount % 60 == 1) {
-                    auto proj = camera.getProjection();
-                    auto view = camera.getView();
-                    std::cout << "Projection matrix (first row): (" 
-                              << proj[0][0] << ", " << proj[0][1] << ", " << proj[0][2] << ", " << proj[0][3] << ")" << std::endl;
-                    std::cout << "View matrix (first row): (" 
-                              << view[0][0] << ", " << view[0][1] << ", " << view[0][2] << ", " << view[0][3] << ")" << std::endl;
-                }
-
-                ubobuffs[frameindex]->writeToBuffer(&ubo);
-                ubobuffs[frameindex]->flush();
-
-                //  renderer
-                renderer_.beginSwapchainRenderpass(commandBuffer);
-                renderSystem.renderObjects(frameinfo, objects_);
-                renderer_.endSwapchainRenderpass(commandBuffer);
-                renderer_.endFrame();
             }
-
+        } catch (const std::exception& e) {
+            std::cerr << "\n=== FATAL ERROR IN RENDER LOOP ===" << std::endl;
+            std::cerr << "Error: " << e.what() << std::endl;
+            std::cerr << "===================================\n" << std::endl;
         }
 
         vkDeviceWaitIdle(device_.get_logic());
+        
+        // Explicitly clear objects to ensure proper cleanup
+        objects_.clear();
     }
 
     void App::loadObjects()
     {
 #ifdef USE_MESH_SHADING
-        // For mesh shading mode: load single Skull model without texture
-        // Model will be automatically converted to meshlets and colored by index modulo 6
-        std::shared_ptr<VKModel::Model> model_skull = VKModel::Model::createModelfromFile(
-            device_,
-            "../../src/src/assets/Skull/Skull.obj",
-            ""  // Empty texture path - no texture will be loaded
-        );
-        auto obj_skull = VKObject::Object::createObject();
-        obj_skull.model_ = model_skull;
-        obj_skull.transform3D_.translation = {0.0f, 0.0f, 0.0f};
-        obj_skull.transform3D_.scale = glm::vec3{0.8f};
-        obj_skull.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
-
-        objects_.push_back(std::move(obj_skull));
-#else
-        // For traditional vertex/fragment pipeline: load multiple Skull models in a grid
-        for (int i = 0; i < 10; i++)
-        {
-            for (int j = 0; j < 10; j++)
-            {
-                std::shared_ptr<VKModel::Model> model_viking_room = VKModel::Model::createModelfromFile(
-                    device_,
-                    "../../src/src/assets/Skull/Skull.obj",
-                    "../../src/src/assets/Skull/Skull.jpg"
-                );
-                auto obj_viking_room = VKObject::Object::createObject();
-                obj_viking_room.model_ = model_viking_room;
-                obj_viking_room.transform3D_.translation = {i * 20.0f, j * 20.0f, 0.0f};
-                obj_viking_room.transform3D_.scale = glm::vec3{0.8f};
-                obj_viking_room.transform3D_.rotation = {1.57f, 1.57f, 0.0f};
-
-                objects_.push_back(std::move(obj_viking_room));
-            }
+        // Print initial memory information
+        std::cout << "\n=== Initial Memory Status ===" << std::endl;
+        device_.printMemoryInfo();
+        
+        VKUtils::SystemMemoryInfo sysMem = VKUtils::getSystemMemoryInfo();
+        if (sysMem.isValid) {
+            std::cout << "System RAM:" << std::endl;
+            std::cout << "  Total: " << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.totalRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Available: " << (sysMem.availableRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.availableRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Used: " << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.usedRam / (1024 * 1024)) << " MB)" << std::endl;
         }
+        std::cout << "============================\n" << std::endl;
+        
+        // Load Boston segments: H_2, H_3, H_4, H_5, H_6, etc.
+        struct SegmentInfo {
+            char segmentLetter;  // 'H', 'I', 'J', etc.
+            int segmentNumber;
+            int numBuildings;
+        };
+        
+        std::vector<SegmentInfo> segments = {
+            // {'H', 5, 1510},
+            // {'H', 6, 1841},
+            // {'H', 7, 5323},
+            // {'H', 8, 5067},
+            {'H', 3, 2041},
+            {'H', 4, 1750},
+            // {'H', 5, 1510},
+            {'I', 3, 1234},
+            {'I', 4, 869},
+            // {'I', 5, 1532},
+            // {'J', 3, 2310},
+            // {'J', 4, 228},
+            // {'J', 5, 941}
+        };
+        
+        for (const auto& seg : segments) {
+            std::string segmentName = "BOS_" + std::string(1, seg.segmentLetter) + "_" + std::to_string(seg.segmentNumber);
+            
+            // Load main model for segment
+            try {
+                std::string mainObjPath = "../../src/src/assets/Boston/" + segmentName + "/" + segmentName + "/" + segmentName + ".obj";
+                std::string mainTexturePath = "../../src/src/assets/Boston/" + segmentName + "/" + segmentName + "/" + segmentName + ".JPG";
+                std::shared_ptr<VKModel::Model> model_main = VKModel::Model::createModelfromFile(
+                    device_, mainObjPath, mainTexturePath
+                );
+                auto obj_main = VKObject::Object::createObject();
+                obj_main.model_ = model_main;
+                obj_main.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+                obj_main.transform3D_.scale = glm::vec3{1.0f};
+                obj_main.transform3D_.rotation = {0.0f, 1.57f, 0.0f};
+                objects_.push_back(std::move(obj_main));
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: Failed to load " << segmentName << " main model: " << e.what() << std::endl;
+            }
+            
+            // Load building models for segment
+            std::cout << "Loading " << seg.numBuildings << " " << segmentName << " building models..." << std::endl;
+            int segmentLoadedCount = 0;
+            const int memoryCheckInterval = 500;
+            
+            for (int i = 0; i < seg.numBuildings; i++) {
+                std::string building_folder = segmentName + "_" + std::to_string(i);
+                std::string obj_path = "../../src/src/assets/Boston/" + segmentName + "/objz/" + 
+                                       building_folder + "/" + building_folder + ".obj";
+                try {
+                    std::shared_ptr<VKModel::Model> model_building = VKModel::Model::createModelfromFile(
+                        device_, obj_path, ""
+                    );
+                    auto obj_building = VKObject::Object::createObject();
+                    obj_building.model_ = model_building;
+                    obj_building.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+                    obj_building.transform3D_.scale = glm::vec3{1.0f};
+                    obj_building.transform3D_.rotation = {0.0f, 1.57f, 0.0f};
+                    objects_.push_back(std::move(obj_building));
+                    segmentLoadedCount++;
+                    
+                    // Periodic memory check
+                    if ((i + 1) % memoryCheckInterval == 0 || i == seg.numBuildings - 1) {
+                        VKUtils::SystemMemoryInfo sysMem = VKUtils::getSystemMemoryInfo();
+                        if (sysMem.isValid) {
+                            double ramUsagePercent = (double)sysMem.usedRam * 100.0 / sysMem.totalRam;
+                            std::cout << "  Progress: " << (i + 1) << "/" << seg.numBuildings 
+                                      << " models processed (" << segmentLoadedCount << " loaded)" << std::endl;
+                            std::cout << "  System RAM: " << std::fixed << std::setprecision(1) << ramUsagePercent 
+                                      << "% used (" << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB / "
+                                      << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                            
+                            if (ramUsagePercent > 80.0) {
+                                std::cerr << "  WARNING: System RAM usage above 80%!" << std::endl;
+                            }
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Warning: Failed to load building " << building_folder << ": " << e.what() << std::endl;
+                }
+            }
+            std::cout << "Loaded " << segmentName << " segment (" << segmentLoadedCount << " buildings)" << std::endl;
+        }
+        
+        // Print final memory status
+        std::cout << "\n=== Final Memory Status ===" << std::endl;
+        device_.printMemoryInfo();
+        
+        sysMem = VKUtils::getSystemMemoryInfo();
+        if (sysMem.isValid) {
+            std::cout << "System RAM:" << std::endl;
+            std::cout << "  Total: " << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.totalRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Available: " << (sysMem.availableRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.availableRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Used: " << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.usedRam / (1024 * 1024)) << " MB)" << std::endl;
+        }
+        std::cout << "============================\n" << std::endl;
+        
+#else
+        // For traditional vertex/fragment pipeline: load Boston segments
+        // Print initial memory information
+        std::cout << "\n=== Initial Memory Status ===" << std::endl;
+        device_.printMemoryInfo();
+        
+        VKUtils::SystemMemoryInfo sysMem = VKUtils::getSystemMemoryInfo();
+        if (sysMem.isValid) {
+            std::cout << "System RAM:" << std::endl;
+            std::cout << "  Total: " << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.totalRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Available: " << (sysMem.availableRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.availableRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Used: " << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.usedRam / (1024 * 1024)) << " MB)" << std::endl;
+        }
+        std::cout << "============================\n" << std::endl;
+        
+        // Load Boston segments: H_2, H_3, H_4, H_5, H_6, etc.
+        struct SegmentInfo {
+            char segmentLetter;  // 'H', 'I', 'J', etc.
+            int segmentNumber;
+            int numBuildings;
+        };
+        
+        std::vector<SegmentInfo> segments = {
+            // {'H', 5, 1510},
+            // {'H', 6, 1841},
+            // {'H', 7, 5323},
+            // {'H', 8, 5067},
+            {'H', 3, 2041},
+            {'H', 4, 1750},
+            // {'H', 5, 1510},
+            {'I', 3, 1234},
+            {'I', 4, 869},
+            // {'I', 5, 1532},
+            // {'J', 3, 2310},
+            // {'J', 4, 228},
+            // {'J', 5, 941}
+        };
+        
+        for (const auto& seg : segments) {
+            std::string segmentName = "BOS_" + std::string(1, seg.segmentLetter) + "_" + std::to_string(seg.segmentNumber);
+            
+            // Load main model for segment
+            try {
+                std::string mainObjPath = "../../src/src/assets/Boston/" + segmentName + "/" + segmentName + "/" + segmentName + ".obj";
+                std::string mainTexturePath = "../../src/src/assets/Boston/" + segmentName + "/" + segmentName + "/" + segmentName + ".JPG";
+                std::shared_ptr<VKModel::Model> model_main = VKModel::Model::createModelfromFile(
+                    device_, mainObjPath, mainTexturePath
+                );
+                auto obj_main = VKObject::Object::createObject();
+                obj_main.model_ = model_main;
+                obj_main.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+                obj_main.transform3D_.scale = glm::vec3{1.0f};
+                obj_main.transform3D_.rotation = {0.0f, 1.57f, 0.0f};
+                objects_.push_back(std::move(obj_main));
+            } catch (const std::exception& e) {
+                std::cerr << "Warning: Failed to load " << segmentName << " main model: " << e.what() << std::endl;
+            }
+            
+            // Load building models for segment
+            std::cout << "Loading " << seg.numBuildings << " " << segmentName << " building models..." << std::endl;
+            int segmentLoadedCount = 0;
+            const int memoryCheckInterval = 500;
+            
+            for (int i = 0; i < seg.numBuildings; i++) {
+                std::string building_folder = segmentName + "_" + std::to_string(i);
+                std::string obj_path = "../../src/src/assets/Boston/" + segmentName + "/objz/" + 
+                                       building_folder + "/" + building_folder + ".obj";
+                try {
+                    std::shared_ptr<VKModel::Model> model_building = VKModel::Model::createModelfromFile(
+                        device_, obj_path, ""
+                    );
+                    auto obj_building = VKObject::Object::createObject();
+                    obj_building.model_ = model_building;
+                    obj_building.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+                    obj_building.transform3D_.scale = glm::vec3{1.0f};
+                    obj_building.transform3D_.rotation = {0.0f, 1.57f, 0.0f};
+                    objects_.push_back(std::move(obj_building));
+                    segmentLoadedCount++;
+                    
+                    // Periodic memory check
+                    if ((i + 1) % memoryCheckInterval == 0 || i == seg.numBuildings - 1) {
+                        VKUtils::SystemMemoryInfo sysMem = VKUtils::getSystemMemoryInfo();
+                        if (sysMem.isValid) {
+                            double ramUsagePercent = (double)sysMem.usedRam * 100.0 / sysMem.totalRam;
+                            std::cout << "  Progress: " << (i + 1) << "/" << seg.numBuildings 
+                                      << " models processed (" << segmentLoadedCount << " loaded)" << std::endl;
+                            std::cout << "  System RAM: " << std::fixed << std::setprecision(1) << ramUsagePercent 
+                                      << "% used (" << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB / "
+                                      << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                            
+                            if (ramUsagePercent > 80.0) {
+                                std::cerr << "  WARNING: System RAM usage above 80%!" << std::endl;
+                            }
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "Warning: Failed to load building " << building_folder << ": " << e.what() << std::endl;
+                }
+            }
+            std::cout << "Loaded " << segmentName << " segment (" << segmentLoadedCount << " buildings)" << std::endl;
+        }
+        
+        // Print final memory status
+        std::cout << "\n=== Final Memory Status ===" << std::endl;
+        device_.printMemoryInfo();
+        
+        sysMem = VKUtils::getSystemMemoryInfo();
+        if (sysMem.isValid) {
+            std::cout << "System RAM:" << std::endl;
+            std::cout << "  Total: " << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.totalRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Available: " << (sysMem.availableRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.availableRam / (1024 * 1024)) << " MB)" << std::endl;
+            std::cout << "  Used: " << (sysMem.usedRam / (1024ULL * 1024 * 1024)) << " GB ("
+                      << (sysMem.usedRam / (1024 * 1024)) << " MB)" << std::endl;
+        }
+        std::cout << "============================\n" << std::endl;
 #endif
-
-
-
-        // std::shared_ptr<VKModel::Model> model_shrek1       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-        //                                                                                                     "../../src/src/assets/shrek.png");
-        // auto obj_shrek1                     = VKObject::Object::createObject();
-        // obj_shrek1.model_                   =                     model_shrek1;
-        // obj_shrek1.transform3D_.translation =              {0.0f, -1.0f, 0.0f};
-        // obj_shrek1.transform3D_.scale       =                glm::vec3{ -0.8f};
-
-        // objects_.push_back(std::move(obj_shrek1));
-
-
-
-        // std::shared_ptr<VKModel::Model> model_shrek2       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-        //                                                                                                     "../../src/src/assets/shrek.png");
-        // auto obj_shrek2                     = VKObject::Object::createObject();
-        // obj_shrek2.model_                   =                     model_shrek2;
-        // obj_shrek2.transform3D_.translation =              {0.0f, 1.0f, 0.0f};
-        // obj_shrek2.transform3D_.scale       =                glm::vec3{ 0.8f};
-
-        // objects_.push_back(std::move(obj_shrek2));
-
-
-
-        // std::shared_ptr<VKModel::Model> model_shrek3       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-        //                                                                                                     "../../src/src/assets/shrek.png");
-        // auto obj_shrek3                     = VKObject::Object::createObject();
-        // obj_shrek3.model_                   =                     model_shrek3;
-        // obj_shrek3.transform3D_.translation =               {2.0f, 1.0f, 0.0f};
-        // obj_shrek3.transform3D_.scale       =                 glm::vec3{ -0.8f};
-
-        // objects_.push_back(std::move(obj_shrek3));
-
-
-
-        // std::shared_ptr<VKModel::Model> model_shrek4       =  VKModel::Model::createModelfromFile (device_,  "../../src/src/assets/shrek.obj",
-        //                                                                                                     "../../src/src/assets/shrek.png");
-        // auto obj_shrek4                     = VKObject::Object::createObject();
-        // obj_shrek4.model_                   =                     model_shrek4;
-        // obj_shrek4.transform3D_.translation =               {-2.0f, -1.0f, 0.0f};
-        // obj_shrek4.transform3D_.scale       =                 glm::vec3{ 0.8f};
-
-        // objects_.push_back(std::move(obj_shrek4));
 
     }
 

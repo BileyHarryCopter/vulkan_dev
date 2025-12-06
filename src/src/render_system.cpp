@@ -98,11 +98,8 @@ struct SimplePushConstantData
         }
 
         if (objects.size() == 0) {
-            std::cout << "Warning: No objects to render" << std::endl;
             return;
         }
-
-        std::cout << "Rendering " << objects.size() << " objects with mesh shading" << std::endl;
 
         for (int object_index = 0; object_index < objects.size(); ++object_index)
         {

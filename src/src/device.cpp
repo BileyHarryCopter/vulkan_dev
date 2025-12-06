@@ -1,4 +1,6 @@
 #include "device.hpp"
+#include "utility.hpp"
+#include <sstream>
 
 namespace VKDevice
 {
@@ -68,6 +70,51 @@ namespace VKDevice
         throw std::runtime_error("failed to find suitable memory type!");
     }
 
+    Device::MemoryInfo Device::getMemoryInfo() const
+    {
+        MemoryInfo info;
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physdevice_, &memProperties);
+        
+        // Get allocated memory statistics (if available through extensions)
+        // Note: Vulkan doesn't provide direct API to query allocated memory,
+        // but we can get heap sizes and properties
+        
+        info.heaps.resize(memProperties.memoryHeapCount);
+        for (uint32_t i = 0; i < memProperties.memoryHeapCount; i++) {
+            info.heaps[i].totalSize = memProperties.memoryHeaps[i].size;
+            info.heaps[i].isDeviceLocal = (memProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+            
+            // Try to get allocated memory (requires VK_EXT_memory_budget extension or similar)
+            // For now, we'll set allocated to 0 and available to total
+            // This is a limitation - Vulkan doesn't expose this directly without extensions
+            info.heaps[i].allocatedSize = 0;  // Would need extension to get real value
+            info.heaps[i].availableSize = memProperties.memoryHeaps[i].size;
+        }
+        
+        return info;
+    }
+
+    void Device::printMemoryInfo() const
+    {
+        MemoryInfo info = getMemoryInfo();
+        std::cout << "=== GPU Memory Information ===" << std::endl;
+        for (size_t i = 0; i < info.heaps.size(); i++) {
+            const auto& heap = info.heaps[i];
+            std::cout << "Heap " << i << ":" << std::endl;
+            std::cout << "  Type: " << (heap.isDeviceLocal ? "Device Local (VRAM)" : "Host Visible (System RAM)") << std::endl;
+            std::cout << "  Total Size: " << (heap.totalSize / (1024 * 1024)) << " MB (" 
+                      << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+            if (heap.allocatedSize > 0) {
+                std::cout << "  Allocated: " << (heap.allocatedSize / (1024 * 1024)) << " MB" << std::endl;
+                std::cout << "  Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+            } else {
+                std::cout << "  (Allocation tracking requires extensions)" << std::endl;
+            }
+        }
+        std::cout << "==============================" << std::endl;
+    }
+
     void Device::createBuffer(VkDeviceSize size,VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                       VkBuffer &buffer, VkDeviceMemory &bufferMemory) 
     {
@@ -88,8 +135,43 @@ namespace VKDevice
         allocInfo.allocationSize  = memRequirements.size;
         allocInfo.memoryTypeIndex = findMemoryType(physdevice_, memRequirements.memoryTypeBits, properties);
 
-        if (vkAllocateMemory(logicdevice_, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
-            throw std::runtime_error("failed to allocate vertex buffer memory!");
+        VkResult result = vkAllocateMemory(logicdevice_, &allocInfo, nullptr, &bufferMemory);
+        if (result != VK_SUCCESS) {
+            // Get memory info for detailed error message
+            MemoryInfo memInfo = getMemoryInfo();
+            VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+            
+            std::ostringstream errorMsg;
+            errorMsg << "failed to allocate vertex buffer memory!" << std::endl;
+            errorMsg << "  Requested size: " << (memRequirements.size / (1024 * 1024)) << " MB (" 
+                     << (memRequirements.size / 1024) << " KB)" << std::endl;
+            errorMsg << "  Memory type index: " << allocInfo.memoryTypeIndex << std::endl;
+            
+            // Find which heap this memory type belongs to
+            VkPhysicalDeviceMemoryProperties memProperties;
+            vkGetPhysicalDeviceMemoryProperties(physdevice_, &memProperties);
+            if (allocInfo.memoryTypeIndex < memProperties.memoryTypeCount) {
+                uint32_t heapIndex = memProperties.memoryTypes[allocInfo.memoryTypeIndex].heapIndex;
+                if (heapIndex < memInfo.heaps.size()) {
+                    const auto& heap = memInfo.heaps[heapIndex];
+                    errorMsg << "  Heap " << heapIndex << " (" 
+                             << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                    errorMsg << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                             << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                    errorMsg << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+                }
+            }
+            
+            if (sysMemInfo.isValid) {
+                errorMsg << "  System RAM:" << std::endl;
+                errorMsg << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                         << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                errorMsg << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                errorMsg << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+            }
+            
+            throw std::runtime_error(errorMsg.str());
+        }
 
         vkBindBufferMemory(logicdevice_, buffer, bufferMemory, 0);
     }
@@ -198,8 +280,44 @@ namespace VKDevice
         allocInfo.allocationSize  =                                                          memRequirements.size;
         allocInfo.memoryTypeIndex = findMemoryType(physdevice_, memRequirements.memoryTypeBits, properties);
 
-        if (vkAllocateMemory(logicdevice_, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS)
-            throw std::runtime_error("failed to allocate image memory!");
+        VkResult result = vkAllocateMemory(logicdevice_, &allocInfo, nullptr, &imageMemory);
+        if (result != VK_SUCCESS) {
+            // Get memory info for detailed error message
+            MemoryInfo memInfo = getMemoryInfo();
+            VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+            
+            std::ostringstream errorMsg;
+            errorMsg << "failed to allocate image memory!" << std::endl;
+            errorMsg << "  Requested size: " << (memRequirements.size / (1024 * 1024)) << " MB (" 
+                     << (memRequirements.size / 1024) << " KB)" << std::endl;
+            errorMsg << "  Image dimensions: " << width << "x" << height << std::endl;
+            errorMsg << "  Memory type index: " << allocInfo.memoryTypeIndex << std::endl;
+            
+            // Find which heap this memory type belongs to
+            VkPhysicalDeviceMemoryProperties memProperties;
+            vkGetPhysicalDeviceMemoryProperties(physdevice_, &memProperties);
+            if (allocInfo.memoryTypeIndex < memProperties.memoryTypeCount) {
+                uint32_t heapIndex = memProperties.memoryTypes[allocInfo.memoryTypeIndex].heapIndex;
+                if (heapIndex < memInfo.heaps.size()) {
+                    const auto& heap = memInfo.heaps[heapIndex];
+                    errorMsg << "  Heap " << heapIndex << " (" 
+                             << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                    errorMsg << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                             << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                    errorMsg << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+                }
+            }
+            
+            if (sysMemInfo.isValid) {
+                errorMsg << "  System RAM:" << std::endl;
+                errorMsg << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                         << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                errorMsg << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                errorMsg << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+            }
+            
+            throw std::runtime_error(errorMsg.str());
+        }
 
         vkBindImageMemory(logicdevice_, image, imageMemory, 0);
     }

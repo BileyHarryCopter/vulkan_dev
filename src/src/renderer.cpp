@@ -1,4 +1,7 @@
 #include "renderer.hpp"
+#include "utility.hpp"
+#include <iostream>
+#include <sstream>
 
 namespace VKRenderer
 {
@@ -22,19 +25,49 @@ namespace VKRenderer
 
     void Renderer::recreateSwapChain()
     {
-        auto extent = window_.get_extent();
-        while (extent.width == 0 || extent.height == 0)
-        {
+        try {
             auto extent = window_.get_extent();
-            glfwWaitEvents();
+            while (extent.width == 0 || extent.height == 0)
+            {
+                auto extent = window_.get_extent();
+                glfwWaitEvents();
+            }
+            vkDeviceWaitIdle(device_.get_logic());
+
+            if (swapchain_->get_swapchain() == nullptr)
+                swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_);
+            else
+                swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_, std::move(swapchain_));
+        } catch (const std::exception& e) {
+            std::cerr << "\n=== ERROR DURING SWAPCHAIN RECREATION ===" << std::endl;
+            std::cerr << "Error: " << e.what() << std::endl;
+            
+            // Print current memory state
+            VKDevice::Device::MemoryInfo memInfo = device_.getMemoryInfo();
+            VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+            
+            std::cerr << "\nCurrent Memory State:" << std::endl;
+            for (size_t i = 0; i < memInfo.heaps.size(); ++i) {
+                const auto& heap = memInfo.heaps[i];
+                std::cerr << "  Heap " << i << " (" 
+                         << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                std::cerr << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                         << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                std::cerr << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+            }
+            
+            if (sysMemInfo.isValid) {
+                std::cerr << "  System RAM:" << std::endl;
+                std::cerr << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                         << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                std::cerr << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                std::cerr << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+            }
+            std::cerr << "==========================================\n" << std::endl;
+            
+            // Re-throw to allow upper-level handling
+            throw;
         }
-        vkDeviceWaitIdle(device_.get_logic());
-
-        if (swapchain_->get_swapchain() == nullptr)
-            swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_);
-        else
-            swapchain_ = std::make_unique<VKSwapchain::Swapchain>(window_, device_, std::move(swapchain_));
-
     }
 
     void Renderer::createCommandBuffers()
@@ -58,7 +91,12 @@ namespace VKRenderer
 
         if (result == VK_ERROR_OUT_OF_DATE_KHR)
         {
-            recreateSwapChain();
+            try {
+                recreateSwapChain();
+            } catch (const std::exception&) {
+                // Error already logged in recreateSwapChain, just return nullptr to skip frame
+                return nullptr;
+            }
             return nullptr;
         }
         if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
@@ -89,7 +127,12 @@ namespace VKRenderer
         if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || window_.wasresized())
         {
             window_.resetresized();
-            recreateSwapChain();
+            try {
+                recreateSwapChain();
+            } catch (const std::exception&) {
+                // Error already logged in recreateSwapChain
+                // Don't throw here to allow graceful degradation
+            }
         }
         else if (result != VK_SUCCESS)
             throw std::runtime_error("failed to present swapchain image");

@@ -86,6 +86,19 @@ public:
 
     uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
+    struct MemoryInfo {
+        struct HeapInfo {
+            VkDeviceSize totalSize;
+            VkDeviceSize allocatedSize;
+            VkDeviceSize availableSize;
+            bool isDeviceLocal;
+        };
+        std::vector<HeapInfo> heaps;
+    };
+    
+    MemoryInfo getMemoryInfo() const;
+    void printMemoryInfo() const;
+
 private:
     void pickPhysicalDevice (VKInstance::Instance& instance);
     void createLogicalDevice(VKInstance::Instance& instance);

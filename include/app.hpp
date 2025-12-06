@@ -19,7 +19,7 @@ namespace VKEngine
 struct GlobalUbo
 {
     glm::mat4 projectionViewMatrix {1.f};
-    glm::vec3 directionToLight = glm::normalize(glm::vec3{-2.0, -3.0, -1.0});
+    glm::vec3 directionToLight = glm::normalize(glm::vec3{0.5, -1.0, 0.5});
 };
 
 class App final

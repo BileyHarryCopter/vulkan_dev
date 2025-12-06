@@ -68,7 +68,7 @@ namespace VKModel
             vkDestroySampler(device_.get_logic(), texturesampler_, nullptr);
         }
         if (textureimgview_ != VK_NULL_HANDLE) {
-            vkDestroyImageView(device_.get_logic(), textureimgview_, nullptr);
+        vkDestroyImageView(device_.get_logic(), textureimgview_, nullptr);
         }
         if (textureimg_ != VK_NULL_HANDLE) {
             vkDestroyImage(device_.get_logic(), textureimg_, nullptr);
@@ -363,6 +363,15 @@ namespace VKModel
                 indices.push_back(uniqueVertices[vertex]);
             }
         }
+        
+        // Explicitly clear intermediate data to free memory immediately
+        uniqueVertices.clear();
+        uniqueVertices.rehash(0);  // Free hash table memory
+        // Clear tinyobjloader data (attrib, shapes, materials will be automatically freed when function exits)
+        shapes.clear();
+        materials.clear();
+        shapes.shrink_to_fit();
+        materials.shrink_to_fit();
     }
 
 #ifdef USE_MESH_SHADING
@@ -523,6 +532,12 @@ namespace VKModel
                 }
             }
         }
+        
+        // Explicitly clear temporary buffers to free memory immediately
+        // temp_meshlets, temp_meshlet_vertices, temp_meshlet_triangles were already moved to meshlet_data_
+        // but vertex_positions can be cleared
+        vertex_positions.clear();
+        vertex_positions.shrink_to_fit();
     }
 
     void Model::createMeshletBuffers()
