@@ -92,6 +92,13 @@ struct SimplePushConstantData
         //  1) Вынести связывание текстур, засунутых в отдельный массив.
         //  2) Отсечение по видимости. 
 
+        // Write draw start timestamp if profiler is available
+        if (frameinfo.profiler_ && frameinfo.profiler_->isSupported()) {
+            frameinfo.profiler_->writeTimestamp(frameinfo.commandbuffer_, frameinfo.frameindex_,
+                                               VKProfiler::TimestampQuery::DRAW_START,
+                                               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+        }
+
 #ifdef USE_MESH_SHADING
         if (!vkCmdDrawMeshTasksEXT_) {
             throw std::runtime_error("vkCmdDrawMeshTasksEXT not initialized! Mesh shading may not be supported.");
@@ -149,6 +156,13 @@ struct SimplePushConstantData
             objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
         }
 #endif
+
+        // Write draw end timestamp if profiler is available
+        if (frameinfo.profiler_ && frameinfo.profiler_->isSupported()) {
+            frameinfo.profiler_->writeTimestamp(frameinfo.commandbuffer_, frameinfo.frameindex_,
+                                               VKProfiler::TimestampQuery::DRAW_END,
+                                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+        }
     }
 
 }  // namespace lve

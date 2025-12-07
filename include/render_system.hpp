@@ -4,6 +4,7 @@
 #include "object.hpp"
 #include "pipeline.hpp"
 #include "camera.hpp"
+#include "profiler.hpp"
 
 // std
 #include <memory>
@@ -19,6 +20,7 @@ struct FrameInfo
     VkCommandBuffer                     commandbuffer_;
     VKCamera::Camera&                          camera_;
     std::vector<VkDescriptorSet> globaldescriptorsets_;
+    VKProfiler::Profiler* profiler_ = nullptr;  // Optional profiler for GPU timing
 };
 
 class RenderSystem 

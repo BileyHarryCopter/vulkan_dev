@@ -12,6 +12,16 @@ namespace VKRenderer
         recreateSwapChain();
 
         createCommandBuffers();
+        
+        // Initialize profiler
+        try {
+            profiler_ = std::make_unique<VKProfiler::Profiler>(device_);
+            if (!profiler_->isSupported()) {
+                std::cerr << "WARNING: GPU timestamp queries not supported. Profiling disabled." << std::endl;
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "WARNING: Failed to initialize profiler: " << e.what() << std::endl;
+        }
     }
 
     Renderer::~Renderer () { freeCommandBuffers(); }
@@ -111,6 +121,14 @@ namespace VKRenderer
         if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS)
             throw std::runtime_error("failed to begin recording command buffer!");
 
+        // Reset and write frame start timestamp
+        if (profiler_ && profiler_->isSupported()) {
+            profiler_->resetQueries(commandBuffer, currentImageIndex_);
+            profiler_->writeTimestamp(commandBuffer, currentImageIndex_, 
+                                     VKProfiler::TimestampQuery::FRAME_START, 
+                                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+        }
+
         return commandBuffer;
     }
 
@@ -119,6 +137,14 @@ namespace VKRenderer
         assert(isFrameStarted_ && "Can't call endFrame while frame is not in progress");
 
         auto commandBuffer = get_currentcmdbuffer();
+        
+        // Write frame end timestamp before ending command buffer
+        if (profiler_ && profiler_->isSupported()) {
+            profiler_->writeTimestamp(commandBuffer, currentImageIndex_,
+                                     VKProfiler::TimestampQuery::FRAME_END,
+                                     VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+        }
+        
         if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS)
             throw std::runtime_error("failed to record command buffer!");
 
@@ -161,6 +187,13 @@ namespace VKRenderer
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
         renderPassInfo.pClearValues    =                        clearValues.data();
 
+        // Write renderpass start timestamp
+        if (profiler_ && profiler_->isSupported()) {
+            profiler_->writeTimestamp(commandBuffer, currentImageIndex_,
+                                     VKProfiler::TimestampQuery::RENDERPASS_START,
+                                     VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+        }
+
         vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
         VkViewport viewport{};
@@ -182,6 +215,13 @@ namespace VKRenderer
     {
         assert(isFrameStarted_ && "Can't call endSwapChainRenderPass if frame is not in progress");
         assert(commandBuffer == get_currentcmdbuffer() && "Can't end renderpass from different frames");
+
+        // Write renderpass end timestamp before ending renderpass
+        if (profiler_ && profiler_->isSupported()) {
+            profiler_->writeTimestamp(commandBuffer, currentImageIndex_,
+                                     VKProfiler::TimestampQuery::RENDERPASS_END,
+                                     VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+        }
 
         vkCmdEndRenderPass(commandBuffer);
     }

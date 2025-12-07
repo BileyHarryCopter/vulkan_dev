@@ -2,6 +2,7 @@
 
 #include "render_system.hpp"
 #include "utility.hpp"
+#include "gpu_monitor.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -132,7 +133,22 @@ namespace VKEngine
         }
 
         auto currentTime = std::chrono::high_resolution_clock::now();
+        auto frameStartTime = currentTime;  // Time when frame rendering started
+        auto lastStatsTime = currentTime;  // Time of last statistics output
+        constexpr double STATS_INTERVAL_SECONDS = 2.0;  // Output statistics every 2 seconds
         int frameCount = 0;
+        
+        // Variables for CPU frame timing
+        double realFrameTimeMs = 0.0;
+        double realFps = 0.0;
+        
+        // Initialize GPU monitor
+        VKGpuMonitor::GpuMonitor gpuMonitor;
+        if (gpuMonitor.isAvailable()) {
+            std::cout << "GPU Monitor initialized: " << gpuMonitor.getGpuName() << std::endl;
+        } else {
+            std::cout << "GPU Monitor not available (nvidia-smi not found)" << std::endl;
+        }
 
         try {
             while(!window_.shouldClose())
@@ -162,6 +178,16 @@ namespace VKEngine
                                   << viewerObject.transform3D_.rotation.z << ")" << std::endl;
                     }
                     frameCount++;
+                    
+                    // Measure real frame time (from previous frame end to current frame start)
+                    auto frameEndTime = std::chrono::high_resolution_clock::now();
+                    if (frameCount > 1) {
+                        realFrameTimeMs = std::chrono::duration<double, std::milli>(frameEndTime - frameStartTime).count();
+                        realFps = realFrameTimeMs > 0.0 ? 1000.0 / realFrameTimeMs : 0.0;
+                    }
+                    
+                    // Record frame start time for next iteration
+                    frameStartTime = frameEndTime;
 
                     if (auto commandBuffer = renderer_.beginFrame())
                     {
@@ -177,7 +203,7 @@ namespace VKEngine
                         }
                         
 
-                        VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets};
+                        VKRenderSystem::FrameInfo frameinfo {frameindex, frameTime, commandBuffer, camera, descriptorsets, renderer_.getProfiler()};
 
                         //  update Ubo
                         GlobalUbo ubo{};
@@ -201,6 +227,67 @@ namespace VKEngine
                         renderSystem.renderObjects(frameinfo, objects_);
                         renderer_.endSwapchainRenderpass(commandBuffer);
                         renderer_.endFrame();
+                        
+                        // Periodically read and display performance statistics
+                        auto now = std::chrono::high_resolution_clock::now();
+                        double timeSinceLastStats = std::chrono::duration<double>(now - lastStatsTime).count();
+                        
+                        if (timeSinceLastStats >= STATS_INTERVAL_SECONDS) {
+                            lastStatsTime = now;
+                            
+                            std::cout << "\n=== Performance Statistics (Frame " << frameCount << ") ===" << std::endl;
+                            std::cout << std::fixed << std::setprecision(3);
+                            
+                            // Real CPU-measured frame time
+                            std::cout << "  Real Frame Time (CPU): " << realFrameTimeMs << " ms" << std::endl;
+                            std::cout << "  Real FPS (CPU): " << std::setprecision(1) << realFps << std::endl;
+                            std::cout << std::setprecision(3);
+                            
+                            // GPU-measured times (from timestamp queries)
+                            if (renderer_.getProfiler() && renderer_.getProfiler()->isSupported()) {
+                                // Read results from the previous frame (which should have completed)
+                                // Since we have double buffering, we need to read from the frame that's not currently being rendered
+                                uint32_t previousFrameIndex = (frameindex + VKSwapchain::MAX_FRAMES_IN_FLIGHT - 1) % VKSwapchain::MAX_FRAMES_IN_FLIGHT;
+                                VKProfiler::ProfileResults results = renderer_.getProfiler()->getResults(previousFrameIndex);
+                                
+                                if (results.isValid) {
+                                    double gpuFps = results.frameTimeMs > 0.0 ? 1000.0 / results.frameTimeMs : 0.0;
+                                    
+                                    std::cout << "  GPU Execution Time: " << results.frameTimeMs << " ms" << std::endl;
+                                    std::cout << "  GPU FPS: " << std::setprecision(1) << gpuFps << std::endl;
+                                    std::cout << std::setprecision(3);
+                                    std::cout << "  RenderPass Time: " << results.renderPassTimeMs << " ms" << std::endl;
+                                    std::cout << "  Draw Time: " << results.drawTimeMs << " ms" << std::endl;
+                                }
+                            }
+                            
+                            // GPU hardware statistics (from nvidia-smi)
+                            if (gpuMonitor.isAvailable()) {
+                                VKGpuMonitor::GpuStats gpuStats = gpuMonitor.getCurrentStats();
+                                if (gpuStats.isValid) {
+                                    std::cout << std::setprecision(0);
+                                    if (gpuStats.utilizationPercent >= 0) {
+                                        std::cout << "  GPU Utilization: " << gpuStats.utilizationPercent << "%" << std::endl;
+                                    }
+                                    if (gpuStats.temperatureCelsius >= 0) {
+                                        std::cout << "  GPU Temperature: " << gpuStats.temperatureCelsius << "°C" << std::endl;
+                                    }
+                                    if (gpuStats.memoryTotalBytes > 0) {
+                                        std::cout << std::fixed << std::setprecision(1);
+                                        double memoryUsedGB = static_cast<double>(gpuStats.memoryUsedBytes) / (1024.0 * 1024.0 * 1024.0);
+                                        double memoryTotalGB = static_cast<double>(gpuStats.memoryTotalBytes) / (1024.0 * 1024.0 * 1024.0);
+                                        std::cout << "  VRAM Usage: " << memoryUsedGB << " GB / " << memoryTotalGB << " GB" << std::endl;
+                                    }
+                                    if (gpuStats.clockGraphicsMhz >= 0) {
+                                        std::cout << std::setprecision(0);
+                                        std::cout << "  GPU Clock: " << gpuStats.clockGraphicsMhz << " MHz" << std::endl;
+                                    }
+                                    std::cout << std::setprecision(3);
+                                }
+                            }
+                            
+                            std::cout << "======================================" << std::endl;
+                        }
                     }
                 } catch (const std::exception& e) {
                     std::cerr << "\n=== RENDER LOOP ERROR (Frame " << frameCount << ") ===" << std::endl;
