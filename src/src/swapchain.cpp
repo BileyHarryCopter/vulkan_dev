@@ -69,9 +69,15 @@ namespace VKSwapchain
 
     VkResult Swapchain::acquireNextImage(uint32_t *imageIndex) 
     { 
-        vkWaitForFences(device_.get_logic(), 1, &inflightfence_[currentframe_], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        // Wait for fence to ensure previous frame is complete (non-blocking check first)
+        VkResult fenceResult = vkGetFenceStatus(device_.get_logic(), inflightfence_[currentframe_]);
+        if (fenceResult == VK_NOT_READY) {
+            // Previous frame not ready, wait for it (this is necessary for synchronization)
+            vkWaitForFences(device_.get_logic(), 1, &inflightfence_[currentframe_], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        }
 
-        auto result = vkAcquireNextImageKHR(device_.get_logic(), swapchain_, std::numeric_limits<uint64_t>::max(), 
+        // Use timeout 0 for non-blocking acquisition (returns VK_NOT_READY if image not available)
+        auto result = vkAcquireNextImageKHR(device_.get_logic(), swapchain_, 0, 
                                             imageavailablesemaphore_[currentframe_], VK_NULL_HANDLE, imageIndex);
 
         if (*imageIndex >= MAX_FRAMES_IN_FLIGHT)
@@ -82,8 +88,14 @@ namespace VKSwapchain
 
     VkResult Swapchain::submitCommandBuffers(const VkCommandBuffer *buffers, uint32_t *imageIndex)
     {
-        if (imagesinflight_[*imageIndex] != VK_NULL_HANDLE)
-            vkWaitForFences(device_.get_logic(), 1, &imagesinflight_[*imageIndex], VK_TRUE, UINT64_MAX);
+        // Check if previous submission for this image is still in flight (non-blocking check first)
+        if (imagesinflight_[*imageIndex] != VK_NULL_HANDLE) {
+            VkResult fenceResult = vkGetFenceStatus(device_.get_logic(), imagesinflight_[*imageIndex]);
+            if (fenceResult == VK_NOT_READY) {
+                // Previous submission not ready, wait for it
+                vkWaitForFences(device_.get_logic(), 1, &imagesinflight_[*imageIndex], VK_TRUE, UINT64_MAX);
+            }
+        }
         imagesinflight_[*imageIndex] = inflightfence_[currentframe_];
 
         VkSubmitInfo submitInfo{};

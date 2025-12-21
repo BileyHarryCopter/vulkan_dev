@@ -102,8 +102,8 @@ public:
     static std::unique_ptr<Model> createModelfromFile (VKDevice::Device& device,const std::string& filepath_to_model, 
                                                                                 const std::string& filepath_to_texture);
 
-    void bind(VkCommandBuffer commandbuffer);
-    void draw(VkCommandBuffer commandbuffer);
+    void bind(VkCommandBuffer commandbuffer) const;
+    void draw(VkCommandBuffer commandbuffer) const;
 
     VkImageView getimgview() { return textureimgview_; }
     VkSampler   getsampler() { return texturesampler_; }

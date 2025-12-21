@@ -1,7 +1,8 @@
 #version 450
 #extension GL_EXT_mesh_shader : require
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+// This allows 32 threads to process vertices/triangles of a single meshlet in parallel
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 layout(location = 0) out vec3 fragColor[];
@@ -12,9 +13,10 @@ layout(set = 0, binding = 0) uniform GlobalUbo {
     vec3     directionToLight;
 } ubo;
 
+// Push constant now only contains object index (matrices are in storage buffer)
 layout(push_constant) uniform Push {
-    mat4  modelMatrix;
-    mat4 normalMatrix;
+    uint objectIndex;
+    uint padding[3];  // Padding to align to 16 bytes
 } push;
 
 // Meshlet structure matching meshopt_Meshlet
@@ -25,8 +27,7 @@ struct Meshlet {
     uint triangle_count;
 };
 
-// Storage buffers for meshlet data
-// Using std430 layout for tight packing (matches C++ structure layout)
+// Using std430 layout for tight packing
 layout(std430, set = 0, binding = 2) readonly buffer MeshletBuffer {
     Meshlet meshlets[];
 };
@@ -41,9 +42,18 @@ layout(std430, set = 0, binding = 4) readonly buffer MeshletTrianglesBuffer {
 
 // Vertex data buffer as raw float array
 // C++ structure: vec3(12) + vec3(12) + vec3(12) + vec2(8) = 44 bytes = 11 floats
-// We read vertices using explicit byte offsets to match C++ layout exactly
 layout(std430, set = 0, binding = 5) readonly buffer VertexDataBuffer {
     float vertexData[];  // Raw float array: each vertex is 11 floats (44 bytes)
+};
+
+// Object matrices storage buffer (shared across all objects)
+struct ObjectMatrices {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+};
+
+layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
+    ObjectMatrices matrices[];
 };
 
 // Vertex data structure for internal use
@@ -58,18 +68,11 @@ struct Vertex {
 const uint VERTEX_SIZE_FLOATS = 11u;  // 44 bytes / 4 bytes per float = 11 floats
 const uint VERTEX_SIZE_BYTES = 44u;   // Total vertex size in bytes
 
-// Function to read vertex data using explicit byte offsets
-// This ensures exact match with C++ structure layout (44 bytes, no padding)
 Vertex readVertex(uint vertexIndex) {
-    // Calculate byte offset for this vertex
     uint byteOffset = vertexIndex * VERTEX_SIZE_BYTES;
     
     // Convert byte offset to float index (each float is 4 bytes)
     uint floatOffset = byteOffset / 4u;
-    
-    // Read vertex data using explicit offsets
-    // C++ layout: position(0-11), color(12-23), normal(24-35), uv(36-43)
-    // In float indices: position(0-2), color(3-5), normal(6-8), uv(9-10)
     
     vec3 position = vec3(
         vertexData[floatOffset + 0u],
@@ -102,40 +105,42 @@ Vertex readVertex(uint vertexIndex) {
     return v;
 }
 
-const float AMBIENT = 0.02;
+const float AMBIENT = 0.3;
 
 void main() {
-    // Get current meshlet index from work group ID
     uint meshletIndex = gl_WorkGroupID.x;
     
-    // Read meshlet data
+    // Get thread ID within the workgroup (0-31)
+    uint threadID = gl_LocalInvocationID.x;
+    const uint WORKGROUP_SIZE = 32u;
+    
     Meshlet meshlet = meshlets[meshletIndex];
     
     uint vertexCount = meshlet.vertex_count;
     uint triangleCount = meshlet.triangle_count;
     
-    // Clamp to max output limits
     vertexCount = min(vertexCount, 64u);
     triangleCount = min(triangleCount, 124u);
     
-    SetMeshOutputsEXT(vertexCount, triangleCount);
+    if (threadID == 0u) {
+        SetMeshOutputsEXT(vertexCount, triangleCount);
+    }
     
-    // Pre-compute normal matrix transform (mat3x3 for optimization)
-    mat3 normalMatrix3 = mat3(push.normalMatrix);
+    ObjectMatrices objectMatrices = matrices[push.objectIndex];
     
-    // Emit vertices from meshlet
-    // meshlet_vertices contains GLOBAL vertex indices (pointing to vertexData[] array)
-    // These indices are stored per meshlet and reference the full vertex buffer
-    for (uint i = 0; i < vertexCount; i++) {
+    mat3 normalMatrix3 = mat3(objectMatrices.normalMatrix);
+    
+    // PARALLEL VERTEX PROCESSING: Each thread processes vertices with stride
+    // Thread 0 processes vertices 0, 32, 64, ...
+    // Thread 1 processes vertices 1, 33, 65, ...
+    for (uint i = threadID; i < vertexCount; i += WORKGROUP_SIZE) {
         // Get global vertex index from meshlet_vertices buffer
-        // meshlet.vertex_offset is the offset into meshlet_vertices array for this meshlet
         uint globalVertexIndex = meshlet_vertices[meshlet.vertex_offset + i];
         
-        // Read vertex data using explicit byte offsets (ensures exact C++ layout match)
-        // Optimized: calculate float offset directly without clamping (indices are validated during meshlet creation)
+        // Read vertex data using explicit byte offsets
         uint floatOffset = globalVertexIndex * VERTEX_SIZE_FLOATS;
         
-        // Direct array access (faster than function call)
+        // Direct array access (optimized)
         vec3 position = vec3(
             vertexData[floatOffset + 0u],
             vertexData[floatOffset + 1u],
@@ -159,38 +164,25 @@ void main() {
             vertexData[floatOffset + 10u]
         );
         
-        // Transform position
-        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * push.modelMatrix * vec4(position, 1.0);
+        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(position, 1.0);
         
-        // Transform normal and calculate lighting (use pre-computed normalMatrix3)
         vec3 normalWorldSpace = normalize(normalMatrix3 * normal);
         float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0.0);
-        
-        // Apply lighting to vertex color
+
         fragColor[i] = lightIntensity * color;
         fragTexCoord[i] = uv;
     }
     
-    // Emit primitives from meshlet triangles
-    // Triangles are packed as uint32_t: each uint32_t contains 3 bytes (i0, i1, i2)
-    // Format: uint32_t = (i0) | (i1 << 8) | (i2 << 16)
-    // Note: triangle indices are LOCAL to the meshlet (0 to vertexCount-1)
-    // They reference the vertices we just emitted in gl_MeshVerticesEXT[0..vertexCount-1]
-    // 
-    // IMPORTANT: triangle_offset is now in uint32_t units, not bytes!
-    for (uint i = 0; i < triangleCount; i++) {
-        // Read packed triangle (each uint32_t contains one triangle)
+    // PARALLEL TRIANGLE PROCESSING: Each thread processes triangles with stride
+    // Thread 0 processes triangles 0, 32, 64, ...
+    // Thread 1 processes triangles 1, 33, 65, ...
+    for (uint i = threadID; i < triangleCount; i += WORKGROUP_SIZE) {
         uint packed = meshlet_triangles[meshlet.triangle_offset + i];
         
-        // Extract 3 bytes from uint32_t
-        // In little-endian (Vulkan/SPIR-V standard): 
-        //   - Least significant byte is at bits 0-7 (rightmost)
-        //   - Next byte is at bits 8-15, then 16-23
         uint i0 = packed & 0xFFu;                    // Byte 0: bits 0-7
         uint i1 = (packed >> 8u) & 0xFFu;           // Byte 1: bits 8-15
         uint i2 = (packed >> 16u) & 0xFFu;          // Byte 2: bits 16-23
         
-        // Indices are validated during meshlet creation, so no need for runtime bounds checking
         gl_PrimitiveTriangleIndicesEXT[i] = uvec3(i0, i1, i2);
     }
 }

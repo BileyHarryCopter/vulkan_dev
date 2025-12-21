@@ -31,6 +31,13 @@ endif()
 # Pass USE_MESH_SHADING flag to the code
 target_compile_definitions(VKSOURCES PRIVATE $<$<BOOL:${USE_MESH_SHADING}>:USE_MESH_SHADING>)
 
+# Option to enable debug symbols for profiling (flame graph)
+option(ENABLE_DEBUG_SYMBOLS "Enable debug symbols for profiling" ON)
+if(ENABLE_DEBUG_SYMBOLS)
+    target_compile_options(VKSOURCES PRIVATE -g)
+    message(STATUS "Debug symbols enabled for profiling")
+endif()
+
 # Find glslc compiler for shaders, fallback to glslang if not found
 find_program(GLSLC glslc
     PATHS

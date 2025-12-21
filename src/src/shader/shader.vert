@@ -15,17 +15,31 @@ layout(set = 0, binding = 0) uniform GlobalUbo {
     vec3     directionToLight;
 } ubo;
 
+// Push constant now only contains object index (matrices are in storage buffer)
 layout(push_constant) uniform Push {
-    mat4  modelMatrix;
-    mat4 normalMatrix;
+    uint objectIndex;
+    uint padding[3];  // Padding to align to 16 bytes
 } push;
 
-const float AMBIENT = 0.02;
+// Object matrices storage buffer (shared across all objects)
+struct ObjectMatrices {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+};
+
+layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
+    ObjectMatrices matrices[];
+};
+
+const float AMBIENT = 0.3;
 
 void main() {
-    gl_Position = ubo.projectionViewMatrix * push.modelMatrix * vec4(position, 1.0);     //  homogeneous coordinate
+    // Read object matrices from storage buffer
+    ObjectMatrices objectMatrices = matrices[push.objectIndex];
+    
+    gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(position, 1.0);     //  homogeneous coordinate
 
-    vec3 normalWorldSpace = normalize(mat3(push.normalMatrix) * normal);
+    vec3 normalWorldSpace = normalize(mat3(objectMatrices.normalMatrix) * normal);
 
     float lightIntensity  = AMBIENT + max(dot (normalWorldSpace, ubo.directionToLight), 0);
 

@@ -109,6 +109,10 @@ namespace VKRenderer
             }
             return nullptr;
         }
+        // Handle VK_NOT_READY (image not available yet) - skip this frame
+        if (result == VK_NOT_READY) {
+            return nullptr;  // Skip frame, try again next iteration
+        }
         if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
             throw std::runtime_error("failed to acquire swapchain image");
 
@@ -167,7 +171,7 @@ namespace VKRenderer
         currentImageIndex_ = (currentImageIndex_ + 1) % VKSwapchain::MAX_FRAMES_IN_FLIGHT;
     }
 
-    void Renderer::beginSwapchainRenderpass(VkCommandBuffer commandBuffer)
+    void Renderer::beginSwapchainRenderpass(VkCommandBuffer commandBuffer, bool useSecondaryCommandBuffers)
     {
         assert(isFrameStarted_ && "Can't call beginSwapChainRenderPass if frame is not in progress");
         assert(commandBuffer == get_currentcmdbuffer() && "Can't begining renderpass from different frames");
@@ -181,7 +185,7 @@ namespace VKRenderer
         renderPassInfo.renderArea.extent =                                 swapchain_extent;
 
         std::array<VkClearValue, 2> clearValues{};
-        clearValues[0].color        = {{0.01f, 0.01f, 0.01f, 1.0f}};
+        clearValues[0].color        = {{0.1f, 0.15f, 0.2f, 1.0f}};
         clearValues[1].depthStencil =                     {1.0f, 0};
 
         renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
@@ -194,7 +198,9 @@ namespace VKRenderer
                                      VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
         }
 
-        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+        VkSubpassContents contents = useSecondaryCommandBuffers ? 
+            VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS : VK_SUBPASS_CONTENTS_INLINE;
+        vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, contents);
 
         VkViewport viewport{};
         viewport.x        =                            0.0f;

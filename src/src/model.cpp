@@ -259,7 +259,7 @@ namespace VKModel
         device_.copyBuffer(stagingBuffer.getBuffer(), indexbuff_->getBuffer(), buffsize);
     }
 
-    void Model::draw(VkCommandBuffer commandbuffer)
+    void Model::draw(VkCommandBuffer commandbuffer) const
     {
         if (hasindexbuffer)
             vkCmdDrawIndexed(commandbuffer, indexcount_, 1, 0, 0, 0);
@@ -267,7 +267,7 @@ namespace VKModel
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
     }
 
-    void Model::bind(VkCommandBuffer commandbuffer)
+    void Model::bind(VkCommandBuffer commandbuffer) const
     {
         VkBuffer buffers[] = {vertexbuff_->getBuffer()};
         VkDeviceSize offsets[] = {0};
@@ -328,11 +328,15 @@ namespace VKModel
                         attrib.vertices[3 * vertex_index + 2]
                     };
 
-                    vertex.color = {
-                        attrib.colors[3 * vertex_index + 0],
-                        attrib.colors[3 * vertex_index + 1],
-                        attrib.colors[3 * vertex_index + 2]
-                    };
+                    if (attrib.colors.size() > 0 && vertex_index * 3 + 2 < attrib.colors.size()) {
+                        vertex.color = {
+                            attrib.colors[3 * vertex_index + 0],
+                            attrib.colors[3 * vertex_index + 1],
+                            attrib.colors[3 * vertex_index + 2]
+                        };
+                    } else {
+                        vertex.color = {1.0f, 1.0f, 1.0f};
+                    }
                 }
 
                 auto normal_index = index.normal_index;

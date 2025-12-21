@@ -12,9 +12,10 @@ layout(set = 0, binding = 0) uniform GlobalUbo {
     vec3     directionToLight;
 } ubo;
 
+// Push constant now only contains object index (matrices are in storage buffer)
 layout(push_constant) uniform Push {
-    mat4  modelMatrix;
-    mat4 normalMatrix;
+    uint objectIndex;
+    uint padding[3];  // Padding to align to 16 bytes
 } push;
 
 // Meshlet structure matching meshopt_Meshlet
@@ -44,6 +45,16 @@ layout(std430, set = 0, binding = 4) readonly buffer MeshletTrianglesBuffer {
 // We read vertices using explicit byte offsets to match C++ layout exactly
 layout(std430, set = 0, binding = 5) readonly buffer VertexDataBuffer {
     float vertexData[];  // Raw float array: each vertex is 11 floats (44 bytes)
+};
+
+// Object matrices storage buffer (shared across all objects)
+struct ObjectMatrices {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+};
+
+layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
+    ObjectMatrices matrices[];
 };
 
 // Vertex data structure for internal use
@@ -133,6 +144,9 @@ void main() {
     
     SetMeshOutputsEXT(vertexCount, triangleCount);
     
+    // Read object matrices from storage buffer
+    ObjectMatrices objectMatrices = matrices[push.objectIndex];
+    
     // Emit vertices from meshlet
     // meshlet_vertices contains GLOBAL vertex indices (pointing to vertexData[] array)
     // These indices are stored per meshlet and reference the full vertex buffer
@@ -152,10 +166,10 @@ void main() {
         Vertex vertex = readVertex(safeVertexIndex);
         
         // Transform position
-        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * push.modelMatrix * vec4(vertex.position, 1.0);
+        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(vertex.position, 1.0);
         
-        // Transform normal and calculate lighting
-        vec3 normalWorldSpace = normalize(mat3(push.normalMatrix) * vertex.normal);
+        // Transform normal and calculate lighting (using matrices from storage buffer)
+        vec3 normalWorldSpace = normalize(mat3(objectMatrices.normalMatrix) * vertex.normal);
         float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0);
         
         // Apply meshlet color (based on index modulo 6) multiplied by lighting

@@ -90,4 +90,32 @@ namespace VKBuffmanager
     VkDescriptorBufferInfo Buffmanager::descriptorInfoForIndex(int index) { return descriptorInfo(alignmentsize_, index * alignmentsize_); }
     VkResult Buffmanager::invalidateIndex(int index)                      {     return invalidate(alignmentsize_, index * alignmentsize_); }
     
+    // Batch flush multiple buffers in a single call
+    VkResult Buffmanager::flushMultiple(VKDevice::Device& device, const std::vector<Buffmanager*>& buffers)
+    {
+        if (buffers.empty()) {
+            return VK_SUCCESS;
+        }
+
+        std::vector<VkMappedMemoryRange> mappedRanges;
+        mappedRanges.reserve(buffers.size());
+
+        for (auto* buffer : buffers) {
+            if (buffer && buffer->mapped_) {
+                VkMappedMemoryRange range{};
+                range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+                range.memory = buffer->memory_;
+                range.offset = 0;
+                range.size = VK_WHOLE_SIZE;
+                mappedRanges.push_back(range);
+            }
+        }
+
+        if (mappedRanges.empty()) {
+            return VK_SUCCESS;
+        }
+
+        return vkFlushMappedMemoryRanges(device.get_logic(), static_cast<uint32_t>(mappedRanges.size()), mappedRanges.data());
+    }
+    
 }   //  end of namespace VKBuffmanager
