@@ -1,9 +1,11 @@
 #include "swapchain.hpp"
 
 #include "model.hpp"
+#include "utility.hpp"
 
 #include <limits>
 #include <algorithm>
+#include <sstream>
 
 namespace VKSwapchain
 {
@@ -67,9 +69,15 @@ namespace VKSwapchain
 
     VkResult Swapchain::acquireNextImage(uint32_t *imageIndex) 
     { 
-        vkWaitForFences(device_.get_logic(), 1, &inflightfence_[currentframe_], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        // Wait for fence to ensure previous frame is complete (non-blocking check first)
+        VkResult fenceResult = vkGetFenceStatus(device_.get_logic(), inflightfence_[currentframe_]);
+        if (fenceResult == VK_NOT_READY) {
+            // Previous frame not ready, wait for it (this is necessary for synchronization)
+            vkWaitForFences(device_.get_logic(), 1, &inflightfence_[currentframe_], VK_TRUE, std::numeric_limits<uint64_t>::max());
+        }
 
-        auto result = vkAcquireNextImageKHR(device_.get_logic(), swapchain_, std::numeric_limits<uint64_t>::max(), 
+        // Use timeout 0 for non-blocking acquisition (returns VK_NOT_READY if image not available)
+        auto result = vkAcquireNextImageKHR(device_.get_logic(), swapchain_, 0, 
                                             imageavailablesemaphore_[currentframe_], VK_NULL_HANDLE, imageIndex);
 
         if (*imageIndex >= MAX_FRAMES_IN_FLIGHT)
@@ -80,8 +88,14 @@ namespace VKSwapchain
 
     VkResult Swapchain::submitCommandBuffers(const VkCommandBuffer *buffers, uint32_t *imageIndex)
     {
-        if (imagesinflight_[*imageIndex] != VK_NULL_HANDLE)
-            vkWaitForFences(device_.get_logic(), 1, &imagesinflight_[*imageIndex], VK_TRUE, UINT64_MAX);
+        // Check if previous submission for this image is still in flight (non-blocking check first)
+        if (imagesinflight_[*imageIndex] != VK_NULL_HANDLE) {
+            VkResult fenceResult = vkGetFenceStatus(device_.get_logic(), imagesinflight_[*imageIndex]);
+            if (fenceResult == VK_NOT_READY) {
+                // Previous submission not ready, wait for it
+                vkWaitForFences(device_.get_logic(), 1, &imagesinflight_[*imageIndex], VK_TRUE, UINT64_MAX);
+            }
+        }
         imagesinflight_[*imageIndex] = inflightfence_[currentframe_];
 
         VkSubmitInfo submitInfo{};
@@ -298,8 +312,45 @@ namespace VKSwapchain
         allocInfo.allocationSize = memRequirements.size;
         allocInfo.memoryTypeIndex = device_.findMemoryType(device_.get_phys(), memRequirements.memoryTypeBits, properties);
 
-        if (vkAllocateMemory(device_.get_logic(), &allocInfo, nullptr, &imageMemory) != VK_SUCCESS)
-            throw std::runtime_error("failed to allocate image memory!");
+        VkResult result = vkAllocateMemory(device_.get_logic(), &allocInfo, nullptr, &imageMemory);
+        if (result != VK_SUCCESS) {
+            // Get memory info for detailed error message
+            VKDevice::Device::MemoryInfo memInfo = device_.getMemoryInfo();
+            VKUtils::SystemMemoryInfo sysMemInfo = VKUtils::getSystemMemoryInfo();
+            
+            std::ostringstream errorMsg;
+            errorMsg << "failed to allocate image memory!" << std::endl;
+            errorMsg << "  Requested size: " << (memRequirements.size / (1024 * 1024)) << " MB (" 
+                     << (memRequirements.size / 1024) << " KB)" << std::endl;
+            errorMsg << "  Image dimensions: " << imageInfo.extent.width << "x" << imageInfo.extent.height << "x" << imageInfo.extent.depth << std::endl;
+            errorMsg << "  Image format: " << imageInfo.format << std::endl;
+            errorMsg << "  Memory type index: " << allocInfo.memoryTypeIndex << std::endl;
+            
+            // Find which heap this memory type belongs to
+            VkPhysicalDeviceMemoryProperties memProperties;
+            vkGetPhysicalDeviceMemoryProperties(device_.get_phys(), &memProperties);
+            if (allocInfo.memoryTypeIndex < memProperties.memoryTypeCount) {
+                uint32_t heapIndex = memProperties.memoryTypes[allocInfo.memoryTypeIndex].heapIndex;
+                if (heapIndex < memInfo.heaps.size()) {
+                    const auto& heap = memInfo.heaps[heapIndex];
+                    errorMsg << "  Heap " << heapIndex << " (" 
+                             << (heap.isDeviceLocal ? "VRAM" : "System RAM") << "):" << std::endl;
+                    errorMsg << "    Total: " << (heap.totalSize / (1024 * 1024)) << " MB ("
+                             << (heap.totalSize / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                    errorMsg << "    Available: " << (heap.availableSize / (1024 * 1024)) << " MB" << std::endl;
+                }
+            }
+            
+            if (sysMemInfo.isValid) {
+                errorMsg << "  System RAM:" << std::endl;
+                errorMsg << "    Total: " << (sysMemInfo.totalRam / (1024 * 1024)) << " MB ("
+                         << (sysMemInfo.totalRam / (1024ULL * 1024 * 1024)) << " GB)" << std::endl;
+                errorMsg << "    Available: " << (sysMemInfo.availableRam / (1024 * 1024)) << " MB" << std::endl;
+                errorMsg << "    Used: " << (sysMemInfo.usedRam / (1024 * 1024)) << " MB" << std::endl;
+            }
+            
+            throw std::runtime_error(errorMsg.str());
+        }
 
         if (vkBindImageMemory(device_.get_logic(), image, imageMemory, 0) != VK_SUCCESS)
             throw std::runtime_error("failed to bind image memory!");

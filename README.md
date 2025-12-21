@@ -8,3 +8,4 @@
 
 ![Shrek image Demo](./images/shrek.gif)
 
+![Buddhas demo](./images/buddha_meshs.gif)

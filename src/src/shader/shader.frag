@@ -9,9 +9,10 @@ layout(location = 0) out vec4 outColor;
 
 layout(binding = 1) uniform sampler2D texSampler;
 
+// Push constant now only contains object index (matrices are in storage buffer)
 layout(push_constant) uniform Push {
-    mat4  modelMatrix;
-    mat4 normalMatrix;
+    uint objectIndex;
+    uint padding[3];  // Padding to align to 16 bytes
 } push;
 
 void main() {

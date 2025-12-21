@@ -19,8 +19,20 @@ struct Transform3Dcomponent
     glm::vec3 scale{1.0f, 1.0f, 1.0f};
     glm::vec3 rotation {};
 
-    glm::mat4 mat4();
-    glm::mat3 normalMatrix();
+    // Оптимизация для статических объектов: кэширование матриц
+    bool isStatic = false;  // Флаг статичности объекта
+    mutable glm::mat4 cachedModelMatrix{1.f};  // Кэш матрицы модели
+    mutable glm::mat3 cachedNormalMatrix{1.f};  // Кэш матрицы нормалей
+    mutable bool matrixCacheValid = false;  // Флаг валидности кэша
+
+    glm::mat4 mat4() const;
+    glm::mat3 normalMatrix() const;
+    
+    // Методы для управления кэшем
+    void invalidateCache() { matrixCacheValid = false; }
+    void updateCache() const;  // Вычисляет и кэширует матрицы
+    const glm::mat4& getCachedModelMatrix() const;
+    const glm::mat3& getCachedNormalMatrix() const;
 
 };
 

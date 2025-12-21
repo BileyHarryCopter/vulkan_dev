@@ -4,6 +4,7 @@
 #include <fstream>
 #include <vector>
 #include <functional>
+#include <cstdint>
 
 namespace Service
 {
@@ -19,3 +20,15 @@ namespace Service
     }
 
 }   //  end of the Service namespace
+
+namespace VKUtils
+{
+    struct SystemMemoryInfo {
+        uint64_t totalRam;      // Total RAM in bytes
+        uint64_t availableRam;  // Available RAM in bytes
+        uint64_t usedRam;       // Used RAM in bytes
+        bool isValid;           // Whether the info was successfully retrieved
+    };
+    
+    SystemMemoryInfo getSystemMemoryInfo();
+}

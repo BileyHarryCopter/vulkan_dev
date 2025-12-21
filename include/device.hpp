@@ -40,7 +40,7 @@ class Device final
     VkCommandPool                    commandpool_;
 
     VkPhysicalDeviceProperties        properties_;
-    const std::vector<const char *> deviceExtensions_ = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+    std::vector<const char *> deviceExtensions_;
 
 public:
 
@@ -72,6 +72,8 @@ public:
 
     VkPhysicalDeviceProperties get_properties () const { return properties_;}
 
+    const std::vector<const char *>& get_device_extensions() const { return deviceExtensions_; }
+
     void createBuffer(VkDeviceSize size,VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
                       VkBuffer &buffer, VkDeviceMemory &bufferMemory);
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
@@ -83,6 +85,19 @@ public:
     VkImageView createImageView(VkImage image, VkFormat format);
 
     uint32_t findMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeFilter, VkMemoryPropertyFlags properties);
+
+    struct MemoryInfo {
+        struct HeapInfo {
+            VkDeviceSize totalSize;
+            VkDeviceSize allocatedSize;
+            VkDeviceSize availableSize;
+            bool isDeviceLocal;
+        };
+        std::vector<HeapInfo> heaps;
+    };
+    
+    MemoryInfo getMemoryInfo() const;
+    void printMemoryInfo() const;
 
 private:
     void pickPhysicalDevice (VKInstance::Instance& instance);

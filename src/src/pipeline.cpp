@@ -14,7 +14,11 @@ namespace VKPipeline
     Pipeline::~Pipeline()
     {
         vkDestroyShaderModule  (device_, fragshadermodule_, nullptr);
+#ifndef USE_MESH_SHADING
         vkDestroyShaderModule  (device_, vertshadermodule_, nullptr);
+#else
+        vkDestroyShaderModule  (device_, meshadermodule_, nullptr);
+#endif
         vkDestroyPipeline      (device_, graphicspipeline_, nullptr);
     }
 
@@ -40,7 +44,7 @@ namespace VKPipeline
         assert(configInfo.renderPass != VK_NULL_HANDLE &&
                 "Cannot create graphics pipeline: no renderPass provided in configInfo");
 
-
+#ifndef USE_MESH_SHADING
         auto vertShaderCode = Service::readfile(VERT_SHADER_FILE_NAME);
         auto fragShaderCode = Service::readfile(FRAG_SHADER_FILE_NAME);
 
@@ -61,7 +65,6 @@ namespace VKPipeline
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
-
         auto   binding_descriptions =   VKModel::Model::Vertex::get_binding_descriptions();
         auto attribute_descriptions = VKModel::Model::Vertex::get_attribute_descriptions();
         VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
@@ -70,6 +73,41 @@ namespace VKPipeline
         vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribute_descriptions.size());
         vertexInputInfo.pVertexBindingDescriptions      =                          binding_descriptions.data();
         vertexInputInfo.pVertexAttributeDescriptions    =                        attribute_descriptions.data();
+#else
+        auto meshShaderCode = Service::readfile(MESH_SHADER_FILE_NAME);
+        auto fragShaderCode = Service::readfile(FRAG_MESH_SHADER_FILE_NAME);
+
+        std::cout << "Mesh shader loaded: " << meshShaderCode.size() << " bytes" << std::endl;
+        std::cout << "Fragment shader loaded: " << fragShaderCode.size() << " bytes" << std::endl;
+
+        meshadermodule_ = createShaderModule(meshShaderCode, device_);
+        fragshadermodule_ = createShaderModule(fragShaderCode, device_);
+        
+        std::cout << "Mesh shader module created successfully" << std::endl;
+        std::cout << "Fragment shader module created successfully" << std::endl;
+
+        VkPipelineShaderStageCreateInfo meshShaderStageInfo{};
+        meshShaderStageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        meshShaderStageInfo.stage  =                          VK_SHADER_STAGE_MESH_BIT_EXT;
+        meshShaderStageInfo.module =                                   meshadermodule_;
+        meshShaderStageInfo.pName  =                                              "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
+        fragShaderStageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage  =                        VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module =                                   fragshadermodule_;
+        fragShaderStageInfo.pName  =                                              "main";
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = {meshShaderStageInfo, fragShaderStageInfo};
+
+        // Mesh shaders don't use vertex input
+        VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+        vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertexInputInfo.vertexBindingDescriptionCount = 0;
+        vertexInputInfo.vertexAttributeDescriptionCount = 0;
+        vertexInputInfo.pVertexBindingDescriptions = nullptr;
+        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+#endif
 
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -134,7 +172,12 @@ namespace VKPipeline
         pipelineInfo.stageCount          =                                               2;
         pipelineInfo.pStages             =                                    shaderStages;
         pipelineInfo.pVertexInputState   =                                &vertexInputInfo;
+#ifndef USE_MESH_SHADING
         pipelineInfo.pInputAssemblyState =                   &configInfo.inputAssemblyInfo;
+#else
+        // Mesh shaders don't use input assembly state
+        pipelineInfo.pInputAssemblyState = nullptr;
+#endif
         pipelineInfo.pViewportState      =                        &configInfo.viewportInfo;
         pipelineInfo.pRasterizationState =                   &configInfo.rasterizationInfo;
         pipelineInfo.pMultisampleState   =                     &configInfo.multisampleInfo;
@@ -146,8 +189,20 @@ namespace VKPipeline
         pipelineInfo.subpass             =                              configInfo.subpass;
         pipelineInfo.basePipelineHandle  =                                  VK_NULL_HANDLE;
 
-        if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicspipeline_) != VK_SUCCESS)
+        VkResult result = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicspipeline_);
+        if (result != VK_SUCCESS) {
+#ifdef USE_MESH_SHADING
+            std::cerr << "Failed to create graphics pipeline with mesh shading! Error code: " << result << std::endl;
+#else
+            std::cerr << "Failed to create graphics pipeline! Error code: " << result << std::endl;
+#endif
             throw std::runtime_error("failed to create graphics pipeline!");
+        }
+#ifdef USE_MESH_SHADING
+        std::cout << "Graphics pipeline with mesh shading created successfully" << std::endl;
+#else
+        std::cout << "Graphics pipeline created successfully" << std::endl;
+#endif
     }
 
     void Pipeline::bind(VkCommandBuffer commandBuffer)
