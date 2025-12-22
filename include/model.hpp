@@ -21,6 +21,25 @@
 namespace VKModel
 {
 
+// Material structure for MTL file data
+struct Material {
+    glm::vec3 diffuseColor;      // Kd - diffuse color
+    glm::vec3 specularColor;      // Ks - specular color
+    float shininess;              // Ns - shininess (specular exponent)
+    float dissolve;               // d - dissolve (transparency, 1.0 = opaque, 0.0 = transparent)
+    
+    Material() : diffuseColor(1.0f, 1.0f, 1.0f), specularColor(0.5f, 0.5f, 0.5f), shininess(5.0f), dissolve(1.0f) {}
+};
+
+// Submesh structure for parts of model with different materials
+struct Submesh {
+    uint32_t indexOffset;         // Offset in index buffer
+    uint32_t indexCount;          // Number of indices
+    uint32_t materialIndex;       // Index into materials array
+    
+    Submesh() : indexOffset(0), indexCount(0), materialIndex(0) {}
+};
+
 class Model final
 {
     VKDevice::Device&                               device_;
@@ -38,6 +57,10 @@ class Model final
 
     VkImageView     textureimgview_ = VK_NULL_HANDLE;
     VkSampler       texturesampler_ = VK_NULL_HANDLE;
+
+    // Materials and submeshes
+    std::vector<Material> materials_;
+    std::vector<Submesh> submeshes_;
 
 #ifdef USE_MESH_SHADING
     // Meshlet data for mesh shading
@@ -80,6 +103,8 @@ public:
     {
         std::vector<Vertex>   vertices{};
         std::vector<uint32_t>  indices{};
+        std::vector<Material> materials{};
+        std::vector<Submesh> submeshes{};
 
         std::string  filepath_to_texture;
 
@@ -104,10 +129,15 @@ public:
 
     void bind(VkCommandBuffer commandbuffer) const;
     void draw(VkCommandBuffer commandbuffer) const;
+    void drawSubmesh(VkCommandBuffer commandbuffer, uint32_t submeshIndex) const;
 
     VkImageView getimgview() { return textureimgview_; }
     VkSampler   getsampler() { return texturesampler_; }
     bool has_texture() { return textureimg_ != VK_NULL_HANDLE; }
+    
+    const std::vector<Material>& getMaterials() const { return materials_; }
+    const std::vector<Submesh>& getSubmeshes() const { return submeshes_; }
+    uint32_t getSubmeshCount() const { return static_cast<uint32_t>(submeshes_.size()); }
     
 #ifdef USE_MESH_SHADING
     VkBuffer getMeshletBuffer() const { return meshlet_buffer_ ? meshlet_buffer_->getBuffer() : VK_NULL_HANDLE; }

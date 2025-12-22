@@ -23,11 +23,12 @@ typedef void (VKAPI_PTR *PFN_vkCmdDrawMeshTasksEXT)(VkCommandBuffer commandBuffe
 
 namespace VKRenderSystem {
 
-// Push constant now only contains object index (matrices are in storage buffer)
+// Push constant contains object index and material index
 struct SimplePushConstantData 
 {
     uint32_t objectIndex{0};
-    uint32_t padding[3];  // Padding to align to 16 bytes (required by Vulkan)
+    uint32_t materialIndex{0};
+    uint32_t padding[2];  // Padding to align to 16 bytes (required by Vulkan)
 };
 
 // Thread-safe frame data structure for parallel command recording
@@ -75,7 +76,7 @@ struct ThreadSafeFrameData {
         pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 #endif
         pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(SimplePushConstantData);  // Now only 16 bytes (object index + padding)
+        pushConstantRange.size = sizeof(SimplePushConstantData);  // 16 bytes (object index + material index + padding)
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -152,9 +153,12 @@ struct ThreadSafeFrameData {
                     descriptorSkipCount++;
                 }
 
-                // Push constant now only contains object index (matrices are in storage buffer)
+                // For mesh shading, we render all meshlets with the first material
+                // (Mesh shading doesn't easily support per-submesh materials without restructuring)
+                // TODO: Implement proper submesh support for mesh shading
                 SimplePushConstantData push_data{};
                 push_data.objectIndex = static_cast<uint32_t>(object_index);
+                push_data.materialIndex = 0;  // Use first material for now
 
                 vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
                                     VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -190,16 +194,43 @@ struct ThreadSafeFrameData {
                     lastBoundDescriptorSet = currentDescriptorSet;
                 }
                 
-                // Push constant now only contains object index (matrices are in storage buffer)
-                SimplePushConstantData push_data{};
-                push_data.objectIndex = static_cast<uint32_t>(object_index);
+                // Render each submesh with its material
+                const auto& model = objects[object_index].model_;
+                uint32_t submeshCount = model->getSubmeshCount();
+                
+                if (submeshCount > 0) {
+                    // Render each submesh separately with its material
+                    for (uint32_t submeshIdx = 0; submeshIdx < submeshCount; ++submeshIdx) {
+                        const auto& submeshes = model->getSubmeshes();
+                        if (submeshIdx < submeshes.size()) {
+                            const auto& submesh = submeshes[submeshIdx];
+                            
+                            // Push constant with object index and material index
+                            SimplePushConstantData push_data{};
+                            push_data.objectIndex = static_cast<uint32_t>(object_index);
+                            push_data.materialIndex = submesh.materialIndex;
 
-                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
-                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                    0, sizeof(SimplePushConstantData), &push_data);
+                            vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
+                                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                0, sizeof(SimplePushConstantData), &push_data);
 
-                objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
-                objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
+                            model->bind(frameinfo.commandbuffer_);
+                            model->drawSubmesh(frameinfo.commandbuffer_, submeshIdx);
+                        }
+                    }
+                } else {
+                    // Fallback: render entire model with default material (index 0)
+                    SimplePushConstantData push_data{};
+                    push_data.objectIndex = static_cast<uint32_t>(object_index);
+                    push_data.materialIndex = 0;
+
+                    vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
+                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        0, sizeof(SimplePushConstantData), &push_data);
+
+                    objects[object_index].model_->bind(frameinfo.commandbuffer_);
+                    objects[object_index].model_->draw(frameinfo.commandbuffer_);
+                }
             }
 #endif
         }
@@ -331,9 +362,10 @@ struct ThreadSafeFrameData {
                 continue;  // Skip if model is null
             }
 
-            // Push constant now only contains object index (matrices are in storage buffer)
+            // Push constant contains object index and material index
             SimplePushConstantData push_data{};
             push_data.objectIndex = static_cast<uint32_t>(object_index);
+            push_data.materialIndex = 0;  // Use first material for parallel recording (can be improved later)
 
 #ifdef USE_MESH_SHADING
             vkCmdPushConstants(secondaryBuffer, pipelineLayout_,
@@ -431,9 +463,10 @@ struct ThreadSafeFrameData {
                 continue;  // Double-check model is still valid
             }
 
-            // Push constant now only contains object index (matrices are in storage buffer)
+            // Push constant contains object index and material index
             SimplePushConstantData push_data{};
             push_data.objectIndex = static_cast<uint32_t>(object_index);
+            push_data.materialIndex = 0;  // Use first material for parallel recording (can be improved later)
 
 #ifdef USE_MESH_SHADING
             vkCmdPushConstants(secondaryBuffer, pipelineLayout,

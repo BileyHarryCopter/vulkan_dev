@@ -43,6 +43,10 @@ class App final
     
     // Storage buffer for object matrices (shared across all objects)
     std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>> objectMatricesBuffers_;
+    
+    // Storage buffer for materials (shared across all objects)
+    std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>> materialsBuffers_;
+    std::vector<VKModel::Material> allMaterials_;  // All materials from all models
 
 public:
     App() : 
@@ -54,16 +58,16 @@ public:
         loadObjects();
 
 #ifdef USE_MESH_SHADING
-        // For mesh shading: UBO, textures, storage buffers for meshlets, and object matrices
+        // For mesh shading: UBO, textures, storage buffers for meshlets, object matrices, and materials
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size())
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() * 4 + 1)).build();  // 4 storage buffers per object + 1 for object matrices
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() * 4 + 2)).build();  // 4 storage buffers per object + 1 for object matrices + 1 for materials
 #else
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size())
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();  // 1 storage buffer for object matrices
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * 2).build();  // 2 storage buffers: object matrices + materials
 #endif
     }
     ~App()= default;

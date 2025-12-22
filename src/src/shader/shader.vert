@@ -8,6 +8,9 @@ layout(location = 3) in  vec2        uv;
 
 layout(location = 0) out vec3    fragColor;
 layout(location = 1) out vec2 fragTexCoord;
+layout(location = 2) out vec3 fragSpecularColor;
+layout(location = 3) out float fragShininess;
+layout(location = 4) out float fragDissolve;
 
 
 layout(set = 0, binding = 0) uniform GlobalUbo {
@@ -15,10 +18,11 @@ layout(set = 0, binding = 0) uniform GlobalUbo {
     vec3     directionToLight;
 } ubo;
 
-// Push constant now only contains object index (matrices are in storage buffer)
+// Push constant contains object index and material index
 layout(push_constant) uniform Push {
     uint objectIndex;
-    uint padding[3];  // Padding to align to 16 bytes
+    uint materialIndex;
+    uint padding[2];  // Padding to align to 16 bytes
 } push;
 
 // Object matrices storage buffer (shared across all objects)
@@ -31,6 +35,19 @@ layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
     ObjectMatrices matrices[];
 };
 
+// Material structure
+struct Material {
+    vec3 diffuseColor;
+    vec3 specularColor;
+    float shininess;
+    float dissolve;
+};
+
+// Materials storage buffer
+layout(std430, set = 0, binding = 7) readonly buffer MaterialsBuffer {
+    Material materials[];
+};
+
 const float AMBIENT = 0.3;
 
 void main() {
@@ -41,8 +58,17 @@ void main() {
 
     vec3 normalWorldSpace = normalize(mat3(objectMatrices.normalMatrix) * normal);
 
+    // Get material
+    Material material = materials[push.materialIndex];
+    
+    // Use material diffuse color if vertex color is white (default), otherwise use vertex color
+    vec3 finalColor = (color == vec3(1.0)) ? material.diffuseColor : color * material.diffuseColor;
+
     float lightIntensity  = AMBIENT + max(dot (normalWorldSpace, ubo.directionToLight), 0);
 
-    fragColor    = lightIntensity * color;
+    fragColor    = lightIntensity * finalColor;
     fragTexCoord =                     uv;
+    fragSpecularColor = material.specularColor;
+    fragShininess = material.shininess;
+    fragDissolve = material.dissolve;
 }

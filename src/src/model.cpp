@@ -52,6 +52,10 @@ namespace VKModel
         createVertexBuffer    (builder.vertices);
         createIndexBuffer     (builder.indices);
         
+        // Store materials and submeshes
+        materials_ = builder.materials;
+        submeshes_ = builder.submeshes;
+        
 #ifdef USE_MESH_SHADING
         // Build meshlets for mesh shading
         if (!builder.indices.empty() && !builder.vertices.empty())
@@ -267,6 +271,19 @@ namespace VKModel
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
     }
 
+    void Model::drawSubmesh(VkCommandBuffer commandbuffer, uint32_t submeshIndex) const
+    {
+        if (submeshIndex >= submeshes_.size())
+            return;
+            
+        const auto& submesh = submeshes_[submeshIndex];
+        
+        if (hasindexbuffer)
+            vkCmdDrawIndexed(commandbuffer, submesh.indexCount, 1, submesh.indexOffset, 0, 0);
+        else
+            vkCmdDraw(commandbuffer, submesh.indexCount, 1, submesh.indexOffset, 0);
+    }
+
     void Model::bind(VkCommandBuffer commandbuffer) const
     {
         VkBuffer buffers[] = {vertexbuff_->getBuffer()};
@@ -304,68 +321,167 @@ namespace VKModel
         std::vector<tinyobj::material_t> materials;
         std::string warn, err;
 
+        // Extract directory path for MTL file loading
+        std::string mtlBaseDir = filepath_to_model.substr(0, filepath_to_model.find_last_of("/\\") + 1);
+
         //  parsing of the obj file
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath_to_model.c_str()))
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath_to_model.c_str(), mtlBaseDir.c_str()))
             throw std::runtime_error(warn + err);
 
         vertices.clear();
         indices.clear();
+        this->materials.clear();
+        submeshes.clear();
 
+        // Convert tinyobj materials to our Material structure
+        for (const auto& mat : materials)
+        {
+            Material material;
+            material.diffuseColor = glm::vec3(mat.diffuse[0], mat.diffuse[1], mat.diffuse[2]);
+            material.specularColor = glm::vec3(mat.specular[0], mat.specular[1], mat.specular[2]);
+            material.shininess = static_cast<float>(mat.shininess);
+            material.dissolve = static_cast<float>(mat.dissolve);
+            this->materials.push_back(material);
+        }
+
+        // If no materials, create a default one
+        if (this->materials.empty())
+        {
+            Material defaultMaterial;
+            this->materials.push_back(defaultMaterial);
+        }
 
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        
+        // Process each shape and create submeshes based on materials
         for (const auto &shape : shapes)
         {
-            for (const auto& index : shape.mesh.indices)
+            uint32_t currentMaterialId = 0;  // Default to first material
+            uint32_t submeshStartIndex = static_cast<uint32_t>(indices.size());
+            
+            // Process indices and track material changes
+            for (size_t faceIdx = 0; faceIdx < shape.mesh.num_face_vertices.size(); ++faceIdx)
             {
-                Vertex vertex{};
-
-                auto vertex_index = index.vertex_index;
-                if (vertex_index >= 0)
+                // Get material ID for this face
+                int materialId = -1;
+                if (faceIdx < shape.mesh.material_ids.size())
                 {
-                    vertex.position = {
-                        attrib.vertices[3 * vertex_index + 0],
-                        attrib.vertices[3 * vertex_index + 1],
-                        attrib.vertices[3 * vertex_index + 2]
-                    };
-
-                    if (attrib.colors.size() > 0 && vertex_index * 3 + 2 < attrib.colors.size()) {
-                        vertex.color = {
-                            attrib.colors[3 * vertex_index + 0],
-                            attrib.colors[3 * vertex_index + 1],
-                            attrib.colors[3 * vertex_index + 2]
-                        };
-                    } else {
-                        vertex.color = {1.0f, 1.0f, 1.0f};
+                    materialId = shape.mesh.material_ids[faceIdx];
+                }
+                
+                // Clamp material ID to valid range
+                uint32_t validMaterialId = 0;
+                if (materialId >= 0 && materialId < static_cast<int>(this->materials.size()))
+                {
+                    validMaterialId = static_cast<uint32_t>(materialId);
+                }
+                
+                // If material changed, create a new submesh
+                if (faceIdx > 0 && validMaterialId != currentMaterialId)
+                {
+                    // Finish current submesh
+                    if (indices.size() > submeshStartIndex)
+                    {
+                        Submesh submesh;
+                        submesh.indexOffset = submeshStartIndex;
+                        submesh.indexCount = static_cast<uint32_t>(indices.size() - submeshStartIndex);
+                        submesh.materialIndex = currentMaterialId;
+                        submeshes.push_back(submesh);
                     }
+                    
+                    // Start new submesh
+                    submeshStartIndex = static_cast<uint32_t>(indices.size());
+                    currentMaterialId = validMaterialId;
                 }
-
-                auto normal_index = index.normal_index;
-                if (normal_index >= 0)
+                else if (faceIdx == 0)
                 {
-                    vertex.normal = {
-                        attrib.normals[3 * normal_index + 0],
-                        attrib.normals[3 * normal_index + 1],
-                        attrib.normals[3 * normal_index + 2]
-                    };
+                    currentMaterialId = validMaterialId;
                 }
-
-                auto texcoord_index = index.texcoord_index;
-                if (texcoord_index >= 0)
+                
+                // Process vertices for this face
+                int numVertices = shape.mesh.num_face_vertices[faceIdx];
+                
+                // Calculate index offset for this face (indices are stored sequentially)
+                size_t indexOffset = 0;
+                for (size_t i = 0; i < faceIdx; ++i)
                 {
-                    vertex.uv = {
-                        attrib.texcoords[2 * texcoord_index + 0],
-                        1.0f - attrib.texcoords[2 * texcoord_index + 1],
-                    };
+                    indexOffset += shape.mesh.num_face_vertices[i];
                 }
-
-
-                if (uniqueVertices.count(vertex) == 0)
+                
+                for (int v = 0; v < numVertices; ++v)
                 {
-                    uniqueVertices[vertex] = static_cast<uint32_t> (vertices.size());
-                    vertices.push_back(vertex);
+                    const auto& index = shape.mesh.indices[indexOffset + v];
+                    Vertex vertex{};
+
+                    auto vertex_index = index.vertex_index;
+                    if (vertex_index >= 0)
+                    {
+                        vertex.position = {
+                            attrib.vertices[3 * vertex_index + 0],
+                            attrib.vertices[3 * vertex_index + 1],
+                            attrib.vertices[3 * vertex_index + 2]
+                        };
+
+                        // Use vertex color if available, otherwise use material diffuse color
+                        if (attrib.colors.size() > 0 && vertex_index * 3 + 2 < attrib.colors.size()) {
+                            vertex.color = {
+                                attrib.colors[3 * vertex_index + 0],
+                                attrib.colors[3 * vertex_index + 1],
+                                attrib.colors[3 * vertex_index + 2]
+                            };
+                        } else {
+                            // Use material diffuse color
+                            vertex.color = this->materials[validMaterialId].diffuseColor;
+                        }
+                    }
+
+                    auto normal_index = index.normal_index;
+                    if (normal_index >= 0)
+                    {
+                        vertex.normal = {
+                            attrib.normals[3 * normal_index + 0],
+                            attrib.normals[3 * normal_index + 1],
+                            attrib.normals[3 * normal_index + 2]
+                        };
+                    }
+
+                    auto texcoord_index = index.texcoord_index;
+                    if (texcoord_index >= 0)
+                    {
+                        vertex.uv = {
+                            attrib.texcoords[2 * texcoord_index + 0],
+                            1.0f - attrib.texcoords[2 * texcoord_index + 1],
+                        };
+                    }
+
+                    if (uniqueVertices.count(vertex) == 0)
+                    {
+                        uniqueVertices[vertex] = static_cast<uint32_t> (vertices.size());
+                        vertices.push_back(vertex);
+                    }
+                    indices.push_back(uniqueVertices[vertex]);
                 }
-                indices.push_back(uniqueVertices[vertex]);
             }
+            
+            // Finish last submesh for this shape
+            if (indices.size() > submeshStartIndex)
+            {
+                Submesh submesh;
+                submesh.indexOffset = submeshStartIndex;
+                submesh.indexCount = static_cast<uint32_t>(indices.size() - submeshStartIndex);
+                submesh.materialIndex = currentMaterialId;
+                submeshes.push_back(submesh);
+            }
+        }
+        
+        // If no submeshes were created (no materials in file), create one for entire model
+        if (submeshes.empty() && !indices.empty())
+        {
+            Submesh submesh;
+            submesh.indexOffset = 0;
+            submesh.indexCount = static_cast<uint32_t>(indices.size());
+            submesh.materialIndex = 0;
+            submeshes.push_back(submesh);
         }
         
         // Explicitly clear intermediate data to free memory immediately

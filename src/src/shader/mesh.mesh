@@ -7,16 +7,20 @@ layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 layout(location = 0) out vec3 fragColor[];
 layout(location = 1) out vec2 fragTexCoord[];
+layout(location = 2) out vec3 fragSpecularColor[];
+layout(location = 3) out float fragShininess[];
+layout(location = 4) out float fragDissolve[];
 
 layout(set = 0, binding = 0) uniform GlobalUbo {
     mat4 projectionViewMatrix;
     vec3     directionToLight;
 } ubo;
 
-// Push constant now only contains object index (matrices are in storage buffer)
+// Push constant contains object index and material index
 layout(push_constant) uniform Push {
     uint objectIndex;
-    uint padding[3];  // Padding to align to 16 bytes
+    uint materialIndex;
+    uint padding[2];  // Padding to align to 16 bytes
 } push;
 
 // Meshlet structure matching meshopt_Meshlet
@@ -54,6 +58,19 @@ struct ObjectMatrices {
 
 layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
     ObjectMatrices matrices[];
+};
+
+// Material structure
+struct Material {
+    vec3 diffuseColor;
+    vec3 specularColor;
+    float shininess;
+    float dissolve;
+};
+
+// Materials storage buffer
+layout(std430, set = 0, binding = 7) readonly buffer MaterialsBuffer {
+    Material materials[];
 };
 
 // Vertex data structure for internal use
@@ -166,11 +183,20 @@ void main() {
         
         gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(position, 1.0);
         
+        // Get material
+        Material material = materials[push.materialIndex];
+        
+        // Use material diffuse color if vertex color is white (default), otherwise use vertex color
+        vec3 finalColor = (color == vec3(1.0)) ? material.diffuseColor : color * material.diffuseColor;
+        
         vec3 normalWorldSpace = normalize(normalMatrix3 * normal);
         float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0.0);
 
-        fragColor[i] = lightIntensity * color;
+        fragColor[i] = lightIntensity * finalColor;
         fragTexCoord[i] = uv;
+        fragSpecularColor[i] = material.specularColor;
+        fragShininess[i] = material.shininess;
+        fragDissolve[i] = material.dissolve;
     }
     
     // PARALLEL TRIANGLE PROCESSING: Each thread processes triangles with stride
