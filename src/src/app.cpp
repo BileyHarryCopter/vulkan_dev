@@ -190,7 +190,8 @@ namespace VKEngine
                 VKDescriptors::DescriptorWriter writer(*setlayout, *globalPool);
                 writer.writeBuffer(0, &bufferInfo)  // UBO
                       .writeImage(1, &imageInfo)    // Texture
-                      .writeBuffer(6, &objectMatricesBufferInfo);  // Object matrices (shared)
+                      .writeBuffer(6, &objectMatricesBufferInfo)   // Object matrices (shared)
+                      .writeBuffer(7, &materialsBufferInfo);        // Materials (shared)
                 writer.build(allDescriptorsets[descriptorSetIndex]);
 #endif
                 descriptorSetIndex++;  // Increment the index explicitly
@@ -207,7 +208,8 @@ namespace VKEngine
         VKCamera::Camera camera{};
 
         auto viewerObject =    VKObject::Object::createObject();
-        viewerObject.transform3D_.translation = {0.0f, 0.0f, -10.0f};
+        // Camera at center of central cell (0, 0) in XZ; height 0 (scene: 8 skyscrapers in 3x grid)
+        viewerObject.transform3D_.translation = {0.0f, 0.0f, 0.0f};
         viewerObject.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
         VKKeyboardController::KeyboardController cameraController{};
 
@@ -439,9 +441,8 @@ namespace VKEngine
                             std::cout << "\n=== Performance Statistics (Frame " << frameCount << ") ===" << std::endl;
                             std::cout << std::fixed << std::setprecision(3);
                             
-                            // Real CPU-measured frame time
+                            // Real CPU-measured frame time (primary CPU metric)
                             std::cout << "  Real Frame Time (CPU): " << realFrameTimeMs << " ms" << std::endl;
-                            std::cout << "  Real FPS (CPU): " << std::setprecision(1) << realFps << std::endl;
                             std::cout << std::setprecision(3);
                             
                             // CPU breakdown
@@ -469,19 +470,16 @@ namespace VKEngine
                                 }
                             }
                             
-                            // GPU-measured times (from timestamp queries)
+                            // GPU-measured times (from timestamp queries); collected for both classic and mesh-shading builds
                             if (renderer_.getProfiler() && renderer_.getProfiler()->isSupported()) {
                                 uint32_t previousFrameIndex = (frameindex + VKSwapchain::MAX_FRAMES_IN_FLIGHT - 1) % VKSwapchain::MAX_FRAMES_IN_FLIGHT;
                                 VKProfiler::ProfileResults results = renderer_.getProfiler()->getResults(previousFrameIndex);
                                 
                                 if (results.isValid) {
-                                    double gpuFps = results.frameTimeMs > 0.0 ? 1000.0 / results.frameTimeMs : 0.0;
-                                    
-                                    std::cout << "  GPU Execution Time: " << results.frameTimeMs << " ms" << std::endl;
-                                    std::cout << "  GPU FPS: " << std::setprecision(1) << gpuFps << std::endl;
-                                    std::cout << std::setprecision(3);
+                                    // Primary GPU metric: draw time (ms) for pipeline comparison
+                                    std::cout << "  Draw Time (GPU): " << results.drawTimeMs << " ms" << std::endl;
+                                    std::cout << "  GPU Frame Time: " << results.frameTimeMs << " ms" << std::endl;
                                     std::cout << "  RenderPass Time: " << results.renderPassTimeMs << " ms" << std::endl;
-                                    std::cout << "  Draw Time: " << results.drawTimeMs << " ms" << std::endl;
                                 }
                             }
                             
@@ -558,80 +556,56 @@ namespace VKEngine
 
     void App::loadObjects()
     {
-#ifdef USE_MESH_SHADING
-        VKUtils::SystemMemoryInfo sysMem;
-        // Закомментирован код загрузки моделей будды
+        // --- Commented out: skyscraper scene (8 buildings in 3x grid) ---
+        // const float SKYSCRAPER_FOOTPRINT_X = 406.3656f;
+        // const float x = SKYSCRAPER_FOOTPRINT_X;
+        // const std::string skyscraperPath = "../../src/src/assets/skycreeper/London_Bridge_Quarter_Combined2resave_in_6-0_verified.obj";
+        // std::shared_ptr<VKModel::Model> model_skyscraper;
         // try {
-        //     std::string buddhaPath = "../../src/src/assets/buddha.obj";
-        //     std::shared_ptr<VKModel::Model> model_buddha = 
-        //         VKModel::Model::createModelfromFile(device_, buddhaPath, "");
-        //     
-        //     const int NUM_INSTANCES = 20;
-        //     const float SPACING = 1.0f;
-        //     
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, 1.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, -1.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-        //     
-        //     std::cout << "Loaded Buddha × " << NUM_INSTANCES << " instances" << std::endl;
-        //     std::cout << "Total objects: " << objects_.size() << std::endl;
+        //     model_skyscraper = VKModel::Model::createModelfromFile(device_, skyscraperPath, "");
+        //     std::cout << "Loaded Skyscraper model (footprint x=" << x << ")" << std::endl;
         // } catch (const std::exception& e) {
-        //     std::cerr << "Failed to load Buddha: " << e.what() << std::endl;
+        //     std::cerr << "Failed to load Skyscraper: " << e.what() << std::endl;
+        //     return;
         // }
-        
-        // Загрузка модели стадиона
+        // const float ROTATE_X_RADIANS = -glm::radians(90.0f);
+        // const float MODEL_CENTER_OFFSET_X = 51.37f;
+        // const float MODEL_CENTER_OFFSET_Z = -2.62f;
+        // const std::array<std::pair<float, float>, 8> gridPositions = {{ {-x, -x}, {0.0f, -x}, {x, -x}, {-x, 0.0f}, {x, 0.0f}, {-x, x}, {0.0f, x}, {x, x} }};
+        // for (const auto& pos : gridPositions) {
+        //     auto obj = VKObject::Object::createObject();
+        //     obj.model_ = model_skyscraper;
+        //     obj.transform3D_.translation = {pos.first + MODEL_CENTER_OFFSET_X, 0.0f, pos.second + MODEL_CENTER_OFFSET_Z};
+        //     obj.transform3D_.scale = glm::vec3{1.0f};
+        //     obj.transform3D_.rotation = {ROTATE_X_RADIANS, 0.0f, 0.0f};
+        //     obj.transform3D_.isStatic = true;
+        //     objects_.push_back(std::move(obj));
+        // }
+        // std::cout << "Total objects: 8 skyscrapers in 3x grid (side 3*x=" << (3.0f * x) << "), camera at grid center" << std::endl;
+
+        // Hotel model (OBJ + MTL in same folder; Z-up -> Y-up rotation)
+        const std::string hotelPath = "../../src/src/assets/hotel/Hotel_Orig.obj";
+        std::shared_ptr<VKModel::Model> model_hotel;
         try {
-            std::string stadiumPath = "../../src/src/assets/stadium/SD-MARLINS_Orig.obj";
-            std::shared_ptr<VKModel::Model> model_stadium = 
-                VKModel::Model::createModelfromFile(device_, stadiumPath, "");
-            
-            auto obj_stadium = VKObject::Object::createObject();
-            obj_stadium.model_ = model_stadium;
-            // Смещение для центрирования модели (центр модели: 104.638, -63.857, 49.9088)
-            obj_stadium.transform3D_.translation = {-104.638f, 63.857f, -49.9088f};
-            obj_stadium.transform3D_.scale = glm::vec3{1.0f};
-            // Поворот на 90 градусов вокруг оси Y (вертикальной оси)
-            obj_stadium.transform3D_.rotation = {0.0f, glm::radians(90.0f), 0.0f};
-            obj_stadium.transform3D_.isStatic = true;
-            objects_.push_back(std::move(obj_stadium));
-            
-            std::cout << "Loaded Stadium model" << std::endl;
-            std::cout << "Total objects: " << objects_.size() << std::endl;
+            model_hotel = VKModel::Model::createModelfromFile(device_, hotelPath, "");
+            std::cout << "Loaded Hotel model" << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "Failed to load Stadium: " << e.what() << std::endl;
+            std::cerr << "Failed to load Hotel: " << e.what() << std::endl;
+            return;
         }
-        
-        // Print final memory status
+        auto obj_hotel = VKObject::Object::createObject();
+        obj_hotel.model_ = model_hotel;
+        obj_hotel.transform3D_.translation = {0.0f, 0.0f, 0.0f};
+        obj_hotel.transform3D_.scale = glm::vec3{1.0f};
+        obj_hotel.transform3D_.rotation = {glm::radians(90.0f), 0.0f, 0.0f};  // Z-up (IFC) -> Y-up
+        obj_hotel.transform3D_.isStatic = true;
+        objects_.push_back(std::move(obj_hotel));
+        std::cout << "Total objects: 1 (Hotel)" << std::endl;
+
+        // Final memory status for both classic and mesh-shading builds
+        VKUtils::SystemMemoryInfo sysMem = VKUtils::getSystemMemoryInfo();
         std::cout << "\n=== Final Memory Status ===" << std::endl;
         device_.printMemoryInfo();
-        
-        sysMem = VKUtils::getSystemMemoryInfo();
         if (sysMem.isValid) {
             std::cout << "System RAM:" << std::endl;
             std::cout << "  Total: " << (sysMem.totalRam / (1024ULL * 1024 * 1024)) << " GB ("
@@ -642,76 +616,6 @@ namespace VKEngine
                       << (sysMem.usedRam / (1024 * 1024)) << " MB)" << std::endl;
         }
         std::cout << "============================\n" << std::endl;
-        
-#else
-        // Закомментирован код загрузки моделей будды
-        // try {
-        //     std::string buddhaPath = "../../src/src/assets/buddha.obj";
-        //     std::shared_ptr<VKModel::Model> model_buddha = 
-        //         VKModel::Model::createModelfromFile(device_, buddhaPath, "");
-        //     
-        //     const int NUM_INSTANCES = 20;
-        //     const float SPACING = 1.0f;
-        //     
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, 1.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-
-        //     for (int i = 0; i < NUM_INSTANCES; i++) {
-        //         auto obj_buddha = VKObject::Object::createObject();
-        //         obj_buddha.model_ = model_buddha;
-        //         obj_buddha.transform3D_.translation = {i * SPACING, 0.0f, -1.0f};
-        //         obj_buddha.transform3D_.scale = glm::vec3{1.0f};
-        //         obj_buddha.transform3D_.rotation = {0.0f, 0.0f, 0.0f};
-        //         obj_buddha.transform3D_.isStatic = true;
-        //         objects_.push_back(std::move(obj_buddha));
-        //     }
-        //     
-        //     std::cout << "Loaded Buddha × " << NUM_INSTANCES << " instances" << std::endl;
-        //     std::cout << "Total objects: " << objects_.size() << std::endl;
-        // } catch (const std::exception& e) {
-        //     std::cerr << "Failed to load Buddha: " << e.what() << std::endl;
-        // }
-        
-        // Загрузка модели стадиона
-        try {
-            std::string stadiumPath = "../../src/src/assets/stadium/SD-MARLINS_Orig.obj";
-            std::shared_ptr<VKModel::Model> model_stadium = 
-                VKModel::Model::createModelfromFile(device_, stadiumPath, "");
-            
-            auto obj_stadium = VKObject::Object::createObject();
-            obj_stadium.model_ = model_stadium;
-            // Смещение для центрирования модели (центр модели: 104.638, -63.857, 49.9088)
-            obj_stadium.transform3D_.translation = {-104.638f, 63.857f, -49.9088f};
-            obj_stadium.transform3D_.scale = glm::vec3{1.0f};
-            // Поворот на 90 градусов вокруг оси Y (вертикальной оси)
-            obj_stadium.transform3D_.rotation = {0.0f, glm::radians(90.0f), 0.0f};
-            obj_stadium.transform3D_.isStatic = true;
-            objects_.push_back(std::move(obj_stadium));
-            
-            std::cout << "Loaded Stadium model" << std::endl;
-            std::cout << "Total objects: " << objects_.size() << std::endl;
-        } catch (const std::exception& e) {
-            std::cerr << "Failed to load Stadium: " << e.what() << std::endl;
-        }
-#endif
-
     }
 
 }   //  end of VKEngine namespace
