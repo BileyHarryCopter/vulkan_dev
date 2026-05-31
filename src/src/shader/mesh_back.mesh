@@ -1,0 +1,209 @@
+#version 450
+#extension GL_EXT_mesh_shader : require
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(triangles, max_vertices = 64, max_primitives = 124) out;
+
+layout(location = 0) out vec3 fragColor[];
+layout(location = 1) out vec2 fragTexCoord[];
+
+layout(set = 0, binding = 0) uniform GlobalUbo {
+    mat4 projectionViewMatrix;
+    vec3     directionToLight;
+} ubo;
+
+// Push constant now only contains object index (matrices are in storage buffer)
+layout(push_constant) uniform Push {
+    uint objectIndex;
+    uint padding[3];  // Padding to align to 16 bytes
+} push;
+
+// Meshlet structure matching meshopt_Meshlet
+struct Meshlet {
+    uint vertex_offset;
+    uint triangle_offset;
+    uint vertex_count;
+    uint triangle_count;
+};
+
+// Storage buffers for meshlet data
+// Using std430 layout for tight packing (matches C++ structure layout)
+layout(std430, set = 0, binding = 2) readonly buffer MeshletBuffer {
+    Meshlet meshlets[];
+};
+
+layout(std430, set = 0, binding = 3) readonly buffer MeshletVerticesBuffer {
+    uint meshlet_vertices[];
+};
+
+layout(std430, set = 0, binding = 4) readonly buffer MeshletTrianglesBuffer {
+    uint meshlet_triangles[];  // Packed as bytes: each uint contains 4 bytes
+};
+
+// Vertex data buffer as raw float array
+// C++ structure: vec3(12) + vec3(12) + vec3(12) + vec2(8) = 44 bytes = 11 floats
+// We read vertices using explicit byte offsets to match C++ layout exactly
+layout(std430, set = 0, binding = 5) readonly buffer VertexDataBuffer {
+    float vertexData[];  // Raw float array: each vertex is 11 floats (44 bytes)
+};
+
+// Object matrices storage buffer (shared across all objects)
+struct ObjectMatrices {
+    mat4 modelMatrix;
+    mat4 normalMatrix;
+};
+
+layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
+    ObjectMatrices matrices[];
+};
+
+// Vertex data structure for internal use
+struct Vertex {
+    vec3 position;
+    vec3 color;
+    vec3 normal;
+    vec2 uv;
+};
+
+// Constants for vertex layout (matching C++ Model::Vertex)
+const uint VERTEX_SIZE_FLOATS = 11u;  // 44 bytes / 4 bytes per float = 11 floats
+const uint VERTEX_SIZE_BYTES = 44u;   // Total vertex size in bytes
+
+// Function to read vertex data using explicit byte offsets
+// This ensures exact match with C++ structure layout (44 bytes, no padding)
+Vertex readVertex(uint vertexIndex) {
+    // Calculate byte offset for this vertex
+    uint byteOffset = vertexIndex * VERTEX_SIZE_BYTES;
+    
+    // Convert byte offset to float index (each float is 4 bytes)
+    uint floatOffset = byteOffset / 4u;
+    
+    // Read vertex data using explicit offsets
+    // C++ layout: position(0-11), color(12-23), normal(24-35), uv(36-43)
+    // In float indices: position(0-2), color(3-5), normal(6-8), uv(9-10)
+    
+    vec3 position = vec3(
+        vertexData[floatOffset + 0u],
+        vertexData[floatOffset + 1u],
+        vertexData[floatOffset + 2u]
+    );
+    
+    vec3 color = vec3(
+        vertexData[floatOffset + 3u],
+        vertexData[floatOffset + 4u],
+        vertexData[floatOffset + 5u]
+    );
+    
+    vec3 normal = vec3(
+        vertexData[floatOffset + 6u],
+        vertexData[floatOffset + 7u],
+        vertexData[floatOffset + 8u]
+    );
+    
+    vec2 uv = vec2(
+        vertexData[floatOffset + 9u],
+        vertexData[floatOffset + 10u]
+    );
+    
+    Vertex v;
+    v.position = position;
+    v.color = color;
+    v.normal = normal;
+    v.uv = uv;
+    return v;
+}
+
+const float AMBIENT = 0.02;
+
+// Array of 6 colors for meshlet coloring (index modulo 6)
+const vec3 MESHLET_COLORS[6] = vec3[](
+    vec3(1.0, 0.0, 0.0),  // 0: Red
+    vec3(0.0, 1.0, 0.0),  // 1: Green
+    vec3(0.0, 0.0, 1.0),  // 2: Blue
+    vec3(1.0, 1.0, 0.0),  // 3: Yellow
+    vec3(1.0, 0.0, 1.0),  // 4: Magenta/Purple
+    vec3(0.0, 1.0, 1.0)   // 5: Cyan
+);
+
+void main() {
+    // Get current meshlet index from work group ID
+    uint meshletIndex = gl_WorkGroupID.x;
+    
+    // Select color based on meshlet index modulo 6
+    vec3 meshletColor = MESHLET_COLORS[meshletIndex % 6u];
+    
+    // Read meshlet data
+    Meshlet meshlet = meshlets[meshletIndex];
+    
+    uint vertexCount = meshlet.vertex_count;
+    uint triangleCount = meshlet.triangle_count;
+    
+    // Clamp to max output limits
+    vertexCount = min(vertexCount, 64u);
+    triangleCount = min(triangleCount, 124u);
+    
+    SetMeshOutputsEXT(vertexCount, triangleCount);
+    
+    // Read object matrices from storage buffer
+    ObjectMatrices objectMatrices = matrices[push.objectIndex];
+    
+    // Emit vertices from meshlet
+    // meshlet_vertices contains GLOBAL vertex indices (pointing to vertexData[] array)
+    // These indices are stored per meshlet and reference the full vertex buffer
+    // Calculate max vertex index based on buffer size (vertexData is float array, each vertex is 11 floats)
+    uint maxVertexIndex = (vertexData.length() / VERTEX_SIZE_FLOATS) - 1u;
+    
+    for (uint i = 0; i < vertexCount; i++) {
+        // Get global vertex index from meshlet_vertices buffer
+        // meshlet.vertex_offset is the offset into meshlet_vertices array for this meshlet
+        uint globalVertexIndex = meshlet_vertices[meshlet.vertex_offset + i];
+        
+        // Clamp vertex index to prevent out-of-bounds access
+        // Note: This is a safety check, indices should be valid
+        uint safeVertexIndex = min(globalVertexIndex, maxVertexIndex);
+        
+        // Read vertex data using explicit byte offsets (ensures exact C++ layout match)
+        Vertex vertex = readVertex(safeVertexIndex);
+        
+        // Transform position
+        gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(vertex.position, 1.0);
+        
+        // Transform normal and calculate lighting (using matrices from storage buffer)
+        vec3 normalWorldSpace = normalize(mat3(objectMatrices.normalMatrix) * vertex.normal);
+        float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0);
+        
+        // Apply meshlet color (based on index modulo 6) multiplied by lighting
+        fragColor[i] = meshletColor * lightIntensity;
+        fragTexCoord[i] = vertex.uv;
+    }
+    
+    // Emit primitives from meshlet triangles
+    // Triangles are packed as uint32_t: each uint32_t contains 3 bytes (i0, i1, i2)
+    // Format: uint32_t = (i0) | (i1 << 8) | (i2 << 16)
+    // Note: triangle indices are LOCAL to the meshlet (0 to vertexCount-1)
+    // They reference the vertices we just emitted in gl_MeshVerticesEXT[0..vertexCount-1]
+    // 
+    // IMPORTANT: triangle_offset is now in uint32_t units, not bytes!
+    for (uint i = 0; i < triangleCount; i++) {
+        // Read packed triangle (each uint32_t contains one triangle)
+        uint packed = meshlet_triangles[meshlet.triangle_offset + i];
+        
+        // Extract 3 bytes from uint32_t
+        // In little-endian (Vulkan/SPIR-V standard): 
+        //   - Least significant byte is at bits 0-7 (rightmost)
+        //   - Next byte is at bits 8-15, then 16-23
+        uint i0 = packed & 0xFFu;                    // Byte 0: bits 0-7
+        uint i1 = (packed >> 8u) & 0xFFu;           // Byte 1: bits 8-15
+        uint i2 = (packed >> 16u) & 0xFFu;          // Byte 2: bits 16-23
+        
+        // Validate indices are within valid range (local to meshlet: 0 to vertexCount-1)
+        // These indices reference the local vertex array we just emitted
+        // Clamp to valid range to prevent out-of-bounds access
+        i0 = min(i0, vertexCount - 1u);
+        i1 = min(i1, vertexCount - 1u);
+        i2 = min(i2, vertexCount - 1u);
+        
+        gl_PrimitiveTriangleIndicesEXT[i] = uvec3(i0, i1, i2);
+    }
+}
+

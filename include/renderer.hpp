@@ -10,6 +10,7 @@
 #include "pipeline.hpp"
 #include "swapchain.hpp"
 #include "object.hpp"
+#include "profiler.hpp"
 
 namespace VKRenderer
 {
@@ -21,6 +22,7 @@ class Renderer final
     VKDevice::Device&                          device_;
     std::unique_ptr<VKSwapchain::Swapchain> swapchain_;
     std::vector<VkCommandBuffer>        commandbuffer_;
+    std::unique_ptr<VKProfiler::Profiler> profiler_;
 
     uint32_t                    currentImageIndex_ = 0;
     bool                       isFrameStarted_ = false;
@@ -44,11 +46,15 @@ public:
     }
 
     //  functions for setting renderpass
-    void beginSwapchainRenderpass(VkCommandBuffer commandBuffer);
+    void beginSwapchainRenderpass(VkCommandBuffer commandBuffer, bool useSecondaryCommandBuffers = false);
     void   endSwapchainRenderpass(VkCommandBuffer commandBuffer);
     VkRenderPass getSwapChainRenderPass() const { return swapchain_->get_renderpass(); }
+    VkFramebuffer getSwapChainFramebuffer() const { return swapchain_->get_framebuffer(currentImageIndex_); }
     float getAspectRatio () const { return swapchain_->extentAspectRatio(); }
     uint32_t getframeindex() const { return currentImageIndex_; }
+    
+    // Profiler access
+    VKProfiler::Profiler* getProfiler() const { return profiler_.get(); }
 
 private:
     void createCommandBuffers();

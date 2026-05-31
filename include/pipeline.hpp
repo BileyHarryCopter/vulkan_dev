@@ -18,6 +18,10 @@ namespace VKPipeline
 
 const std::string VERT_SHADER_FILE_NAME = "../../src/src/shader/vert.spv";
 const std::string FRAG_SHADER_FILE_NAME = "../../src/src/shader/frag.spv";
+#ifdef USE_MESH_SHADING
+const std::string MESH_SHADER_FILE_NAME = "../../src/src/shader/mesh.spv";
+const std::string FRAG_MESH_SHADER_FILE_NAME = "../../src/src/shader/frag_mesh.spv";
+#endif
 
 struct PipelineConfigInfo 
 {
@@ -48,7 +52,11 @@ class Pipeline final
     VkDevice                   device_ = VK_NULL_HANDLE;
     VkRenderPass           renderpass_ = VK_NULL_HANDLE;
 
+#ifndef USE_MESH_SHADING
     VkShaderModule   vertshadermodule_ = VK_NULL_HANDLE;
+#else
+    VkShaderModule   meshadermodule_ = VK_NULL_HANDLE;
+#endif
     VkShaderModule   fragshadermodule_ = VK_NULL_HANDLE;
 
     VkPipeline       graphicspipeline_ = VK_NULL_HANDLE;

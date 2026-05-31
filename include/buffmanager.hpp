@@ -42,6 +42,9 @@ public:
     VkDescriptorBufferInfo descriptorInfoForIndex (int index);
     VkResult invalidateIndex (int index);
 
+    // Static method for batching flush operations across multiple buffers
+    static VkResult flushMultiple(VKDevice::Device& device, const std::vector<Buffmanager*>& buffers);
+
     VkBuffer                           getBuffer() const              { return buffer_; }
     void*                        getMappedMemory() const              { return mapped_; }
     uint32_t                    getInstanceCount() const       { return instancecount_; }

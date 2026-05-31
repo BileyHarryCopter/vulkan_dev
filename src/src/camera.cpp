@@ -79,5 +79,36 @@ namespace VKCamera
         viewMatrix[3][1] = -glm::dot(v, position);
         viewMatrix[3][2] = -glm::dot(w, position);
     }
+
+    void Camera::setViewXYZ(glm::vec3 position, glm::vec3 rotation) 
+    {
+        // XYZ order: X (pitch), then Y (yaw), then Z (roll)
+        // This allows yaw to rotate around local upDir (after pitch), not world Y axis
+        const float c1   =   glm::cos(rotation.x);  // pitch
+        const float s1   =   glm::sin(rotation.x);
+        const float c2   =   glm::cos(rotation.y);  // yaw (around local upDir after pitch)
+        const float s2   =   glm::sin(rotation.y);
+        const float c3   =   glm::cos(rotation.z);  // roll
+        const float s3   =   glm::sin(rotation.z);
+        
+        // u = right direction, v = up direction, w = forward direction (view direction)
+        const glm::vec3 u{(c2 * c3), (s1 * s2 * c3 + c1 * s3), (-c1 * s2 * c3 + s1 * s3)};
+        const glm::vec3 v{(-c2 * s3), (-s1 * s2 * s3 + c1 * c3), (c1 * s2 * s3 + s1 * c3)};
+        const glm::vec3 w{(s2), (-s1 * c2), (c1 * c2)};
+        
+        viewMatrix       =         glm::mat4{1.f};
+        viewMatrix[0][0] =                    u.x;
+        viewMatrix[1][0] =                    u.y;
+        viewMatrix[2][0] =                    u.z;
+        viewMatrix[0][1] =                    v.x;
+        viewMatrix[1][1] =                    v.y;
+        viewMatrix[2][1] =                    v.z;
+        viewMatrix[0][2] =                    w.x;
+        viewMatrix[1][2] =                    w.y;
+        viewMatrix[2][2] =                    w.z;
+        viewMatrix[3][0] = -glm::dot(u, position);
+        viewMatrix[3][1] = -glm::dot(v, position);
+        viewMatrix[3][2] = -glm::dot(w, position);
+    }
 }
   // namespace lve

@@ -32,7 +32,11 @@ namespace VKInstance
         appInfo.applicationVersion  =           VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName         =                        "No Engine";
         appInfo.engineVersion       =           VK_MAKE_VERSION(1, 0, 0);
+#ifdef USE_MESH_SHADING
+        appInfo.apiVersion          =                 VK_API_VERSION_1_3;  // Mesh shading requires Vulkan 1.3+
+#else
         appInfo.apiVersion          =                 VK_API_VERSION_1_0;
+#endif
 
         VkInstanceCreateInfo createInfo{};
         createInfo.sType                   =         VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

@@ -3,6 +3,8 @@
 #include "swapchain.hpp"
 
 #include <cstring>
+#include <iostream>
+#include <algorithm>
 
 namespace VKDevice
 {
@@ -93,19 +95,79 @@ namespace VKDevice
         std::vector<VkPhysicalDevice> devices(deviceCount);
         vkEnumeratePhysicalDevices(instance.get(), &deviceCount, devices.data());
 
+        // Collect all suitable devices and prioritize
+        struct SuitableDevice {
+            VkPhysicalDevice device;
+            VkPhysicalDeviceProperties props;
+            int priority; // Higher = better (NVIDIA discrete = 3, other discrete = 2, other = 1)
+        };
+        std::vector<SuitableDevice> suitableDevices;
+
         for (const auto& device : devices) 
         {
+            VkPhysicalDeviceProperties props;
+            vkGetPhysicalDeviceProperties(device, &props);
+            
             if (isDeviceSuitable(device, instance))
             {
-                physdevice_ = device;
-                break;
+                SuitableDevice sd;
+                sd.device = device;
+                sd.props = props;
+                
+                // Calculate priority: NVIDIA discrete > other discrete > other
+                if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+                    if (strstr(props.deviceName, "NVIDIA") != nullptr || 
+                        strstr(props.deviceName, "RTX") != nullptr ||
+                        strstr(props.deviceName, "GeForce") != nullptr) {
+                        sd.priority = 3; // Highest priority
+                    } else {
+                        sd.priority = 2; // Discrete but not NVIDIA
+                    }
+                } else {
+                    sd.priority = 1; // Other types
+                }
+                
+                suitableDevices.push_back(sd);
             }   
         }
 
-        if (physdevice_ == VK_NULL_HANDLE)
+        if (suitableDevices.empty()) {
             throw std::runtime_error("failed to find a suitable GPU!");
+        }
 
-        // vkGetPhysicalDeviceProperties(physdevice_, &properties);  -  why does it not work?
+        // Sort by priority (highest first)
+        std::sort(suitableDevices.begin(), suitableDevices.end(), 
+                  [](const SuitableDevice& a, const SuitableDevice& b) {
+                      return a.priority > b.priority;
+                  });
+
+        // Select the best device
+        physdevice_ = suitableDevices[0].device;
+        properties_ = suitableDevices[0].props;
+
+        // Log selected device
+        std::cout << "Selected GPU: " << properties_.deviceName 
+                  << " (Type: " << (properties_.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? "Discrete" : "Other") << ")" << std::endl;
+
+#ifdef USE_MESH_SHADING
+        // Log available extensions for debugging
+        uint32_t extensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(physdevice_, nullptr, &extensionCount, nullptr);
+        std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(physdevice_, nullptr, &extensionCount, availableExtensions.data());
+        
+        bool hasMeshShaderExt = false;
+        for (const auto& ext : availableExtensions) {
+            if (strcmp(ext.extensionName, VK_EXT_MESH_SHADER_EXTENSION_NAME) == 0) {
+                hasMeshShaderExt = true;
+                std::cout << "Found VK_EXT_mesh_shader extension on selected device" << std::endl;
+                break;
+            }
+        }
+        if (!hasMeshShaderExt) {
+            std::cout << "WARNING: VK_EXT_mesh_shader extension NOT found on selected device!" << std::endl;
+        }
+#endif
     }
 
 }   //  end of VKInstance namespace

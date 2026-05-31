@@ -4,13 +4,29 @@
 #include "object.hpp"
 #include "pipeline.hpp"
 #include "camera.hpp"
+#include "profiler.hpp"
 
 // std
 #include <memory>
 #include <vector>
+#include <glm/glm.hpp>
+#include <thread>
+#include <mutex>
 
 namespace VKRenderSystem
 {
+
+// Structure to cache precomputed matrices for parallel processing
+struct PrecomputedMatrices {
+    glm::mat4 modelMatrix{1.f};
+    glm::mat4 normalMatrix{1.f};
+};
+
+// Structure for storage buffer with object matrices (matches GLSL std430 layout)
+struct ObjectMatrices {
+    glm::mat4 modelMatrix{1.f};
+    glm::mat4 normalMatrix{1.f};
+};
 
 struct FrameInfo
 {
@@ -19,6 +35,13 @@ struct FrameInfo
     VkCommandBuffer                     commandbuffer_;
     VKCamera::Camera&                          camera_;
     std::vector<VkDescriptorSet> globaldescriptorsets_;
+    std::vector<PrecomputedMatrices>* precomputedMatrices_ = nullptr;  // Optional precomputed matrices
+    VKProfiler::Profiler* profiler_ = nullptr;  // Optional profiler for GPU timing
+    VkFramebuffer framebuffer_ = VK_NULL_HANDLE;  // Framebuffer for secondary command buffers
+#ifdef USE_MESH_SHADING
+    /** Per-object visible meshlet count (size = objects.size()). If null, full meshlet count is used. */
+    std::vector<uint32_t>* visibleMeshletCounts_ = nullptr;
+#endif
 };
 
 class RenderSystem 
@@ -28,6 +51,20 @@ class RenderSystem
 
     std::unique_ptr<VKPipeline::Pipeline> pipeline_;
     VkPipelineLayout                pipelineLayout_;
+    VkRenderPass                    renderPass_;  // Store for secondary command buffers
+
+#ifdef USE_MESH_SHADING
+    PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT_ = nullptr;
+#endif
+
+    // Thread-local command resources for parallel command recording
+    struct ThreadCommandResources {
+        VkCommandPool commandPool = VK_NULL_HANDLE;
+        std::vector<VkCommandBuffer> secondaryBuffers;  // One per frame
+    };
+    std::vector<ThreadCommandResources> threadCommandResources_;
+    size_t numThreads_ = 0;
+    bool useParallelRecording_ = false;
 
 public:
     RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
@@ -36,12 +73,24 @@ public:
     RenderSystem(const RenderSystem &) = delete;
     RenderSystem &operator=(const RenderSystem &) = delete;
 
-    void renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &Objects);
+    /** If visibleIndices is non-null, only objects at those indices are rendered (frustum culling). */
+    void renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &objects,
+                      const std::vector<uint32_t>* visibleIndices = nullptr);
+    void enableParallelRecording(bool enable = true);
+    bool isParallelRecordingEnabled() const { return useParallelRecording_; }
+    void recordSecondaryCommandBuffers(const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
+                                       const std::vector<uint32_t>* visibleIndices = nullptr);
+    void executeSecondaryCommandBuffers(const FrameInfo& frameinfo, size_t objectCount);
 
 private:
     void createPipelineLayout(const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts);
     void createPipeline(VkRenderPass renderPass);
-
+    void createThreadCommandPools();
+    void destroyThreadCommandPools();
+    void recordSecondaryCommands(VkCommandBuffer secondaryBuffer, VkRenderPass renderPass,
+                                  const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
+                                  size_t startIndex, size_t endIndex,
+                                  const std::vector<uint32_t>* visibleIndices = nullptr);
 };
 
 }  // namespace lve

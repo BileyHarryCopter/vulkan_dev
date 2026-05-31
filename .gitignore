@@ -1,2 +1,13 @@
 build/
 .vscode/
+
+# Profiling files
+perf.data
+perf.data.*
+flamegraph.html
+*.flamegraph.html
+/tmp/perf.out
+/tmp/perf.folded
+
+# FlameGraph repository (optional - uncomment if you don't want to track it)
+# scripts/FlameGraph/
