@@ -27,7 +27,7 @@ public:
     void moveInPlaneXZ(GLFWwindow* window, float dt, VKObject::Object& Object);
 
     KeyMappings keys{};
-    float moveSpeed{5.0f};  // Increased 10x for faster camera movement
+    float moveSpeed{50.0f};  // 2x faster movement for faster LOD sweeps
     float lookSpeed{1.0f};
 };
 }  // namespace VKKeyboardController 

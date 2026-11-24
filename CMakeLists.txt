@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.12)
 
 project(HW3D
         LANGUAGES CXX)
@@ -109,13 +109,29 @@ set(CMAKE_CXX_EXTENSIONS        OFF)
 
 # Option to enable mesh shading support
 option(USE_MESH_SHADING "Enable mesh shading pipeline (requires VK_EXT_mesh_shader)" OFF)
+option(BUILD_LOD_BAKER "Build offline LOD baker tool" ON)
 
-# Add meshoptimizer submodule if mesh shading is enabled
-if(USE_MESH_SHADING)
+# Add meshoptimizer submodule if mesh shading or LOD baker is enabled
+if(USE_MESH_SHADING OR BUILD_LOD_BAKER)
     add_subdirectory(meshoptimizer)
-    message(STATUS "Mesh shading enabled - meshoptimizer will be built")
+    message(STATUS "meshoptimizer will be built")
 endif()
 
 include_directories(./include/)
 
 add_subdirectory(src)
+
+if(BUILD_LOD_BAKER)
+    set(TINY_OBJ_LOADER ${CMAKE_CURRENT_SOURCE_DIR}/tinyobjloader/)
+    add_executable(lod_baker
+        tools/lod_baker.cpp
+        ${TINY_OBJ_LOADER}/tinyobjloader.cc
+    )
+    target_include_directories(lod_baker
+        PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${TINY_OBJ_LOADER}
+        ${CMAKE_CURRENT_SOURCE_DIR}/meshoptimizer/src
+    )
+    target_link_libraries(lod_baker PRIVATE meshoptimizer)
+endif()

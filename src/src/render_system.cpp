@@ -23,11 +23,12 @@ typedef void (VKAPI_PTR *PFN_vkCmdDrawMeshTasksEXT)(VkCommandBuffer commandBuffe
 
 namespace VKRenderSystem {
 
-// Push constant now only contains object index (matrices are in storage buffer)
+// Push constant contains object index and material index
 struct SimplePushConstantData 
 {
     uint32_t objectIndex{0};
-    uint32_t padding[3];  // Padding to align to 16 bytes (required by Vulkan)
+    uint32_t materialIndex{0};
+    uint32_t padding[2];  // Padding to align to 16 bytes (required by Vulkan)
 };
 
 // Thread-safe frame data structure for parallel command recording
@@ -36,6 +37,9 @@ struct ThreadSafeFrameData {
     std::vector<PrecomputedMatrices> precomputedMatrices;
     VkFramebuffer framebuffer;
     bool hasPrecomputedMatrices;
+#ifdef USE_MESH_SHADING
+    std::vector<uint32_t>* visibleMeshletCounts = nullptr;
+#endif
 };
 
     RenderSystem::RenderSystem(VKDevice::Device &device, VkRenderPass renderPass, const std::vector<VkDescriptorSetLayout>& descriptorSetLayouts): device_{device}, renderPass_{renderPass}
@@ -75,7 +79,7 @@ struct ThreadSafeFrameData {
         pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 #endif
         pushConstantRange.offset = 0;
-        pushConstantRange.size = sizeof(SimplePushConstantData);  // Now only 16 bytes (object index + padding)
+        pushConstantRange.size = sizeof(SimplePushConstantData);  // 16 bytes (object index + material index + padding)
 
         VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
         pipelineLayoutInfo.sType                  =      VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -101,9 +105,11 @@ struct ThreadSafeFrameData {
         pipeline_ = std::make_unique<VKPipeline::Pipeline>(device_, pipelineConfig);
     }
 
-    void RenderSystem::renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &objects)
+    void RenderSystem::renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &objects,
+                                    const std::vector<uint32_t>* visibleIndices)
     {
-        if (objects.size() == 0) {
+        const size_t numToRender = visibleIndices ? visibleIndices->size() : objects.size();
+        if (numToRender == 0 || objects.size() == 0) {
             return;
         }
 
@@ -114,13 +120,9 @@ struct ThreadSafeFrameData {
                                                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
         }
 
-        // If parallel recording is enabled, secondary buffers should already be recorded
-        // and we just execute them. Otherwise use sequential recording.
         if (useParallelRecording_ && threadCommandResources_.size() > 0) {
-            // Execute already-recorded secondary command buffers
-            executeSecondaryCommandBuffers(frameinfo, objects.size());
+            executeSecondaryCommandBuffers(frameinfo, numToRender);
         } else {
-            // Traditional sequential recording
             pipeline_->bind(frameinfo.commandbuffer_);
 
 #ifdef USE_MESH_SHADING
@@ -128,78 +130,78 @@ struct ThreadSafeFrameData {
                 throw std::runtime_error("vkCmdDrawMeshTasksEXT not initialized! Mesh shading may not be supported.");
             }
 
-            // OPTIMIZATION: Cache last descriptor set to avoid redundant bindings
-            // Many objects (buildings without textures) share the same descriptor set
             VkDescriptorSet lastBoundDescriptorSet = VK_NULL_HANDLE;
-            uint32_t descriptorBindCount = 0;
-            uint32_t descriptorSkipCount = 0;
 
-            for (int object_index = 0; object_index < objects.size(); ++object_index)
-            {
+            for (size_t i = 0; i < numToRender; ++i) {
+                const uint32_t object_index = visibleIndices ? (*visibleIndices)[i] : static_cast<uint32_t>(i);
                 if (object_index >= frameinfo.globaldescriptorsets_.size()) {
                     throw std::runtime_error("Descriptor set index out of bounds in renderObjects!");
                 }
 
                 VkDescriptorSet currentDescriptorSet = frameinfo.globaldescriptorsets_[object_index];
-
-                // Only bind descriptor set if it changed from previous object
                 if (currentDescriptorSet != lastBoundDescriptorSet) {
-                    vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         pipelineLayout_, 0, 1, &currentDescriptorSet, 0, nullptr);
                     lastBoundDescriptorSet = currentDescriptorSet;
-                    descriptorBindCount++;
-                } else {
-                    descriptorSkipCount++;
                 }
 
-                // Push constant now only contains object index (matrices are in storage buffer)
                 SimplePushConstantData push_data{};
-                push_data.objectIndex = static_cast<uint32_t>(object_index);
+                push_data.objectIndex = object_index;
+                push_data.materialIndex = 0;
 
-                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
+                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_,
                                     VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
                                     0, sizeof(SimplePushConstantData), &push_data);
 
-                // Mesh shaders don't use vertex/index buffers
-                // Draw meshlets: one mesh task per meshlet in the model
-                // OPTIMIZED: With workgroup size 32, GPU occupancy is much better
-                // Parameters: commandBuffer, groupCountX, groupCountY, groupCountZ
-                uint32_t meshletCount = objects[object_index].model_->getMeshletCount();
+                uint32_t meshletCount = (frameinfo.visibleMeshletCounts_ && object_index < frameinfo.visibleMeshletCounts_->size())
+                    ? (*frameinfo.visibleMeshletCounts_)[object_index]
+                    : objects[object_index].model_->getMeshletCount();
                 if (meshletCount > 0) {
                     vkCmdDrawMeshTasksEXT_(frameinfo.commandbuffer_, meshletCount, 1, 1);
                 } else {
-                    // Fallback: draw one mesh task if no meshlets (shouldn't happen)
                     vkCmdDrawMeshTasksEXT_(frameinfo.commandbuffer_, 1, 1, 1);
                 }
             }
-            
-            // Debug: Log descriptor binding statistics (can be removed in production)
-            // std::cout << "Descriptor bindings: " << descriptorBindCount << " (skipped: " << descriptorSkipCount << ")" << std::endl;
 #else
-            // OPTIMIZATION: Cache descriptor bindings for classic pipeline too
             VkDescriptorSet lastBoundDescriptorSet = VK_NULL_HANDLE;
-            
-            for (int object_index = 0; object_index < objects.size(); ++object_index)
-            {
+
+            for (size_t i = 0; i < numToRender; ++i) {
+                const uint32_t object_index = visibleIndices ? (*visibleIndices)[i] : static_cast<uint32_t>(i);
                 VkDescriptorSet currentDescriptorSet = frameinfo.globaldescriptorsets_[object_index];
-                
-                // Only bind descriptor set if it changed from previous object
                 if (currentDescriptorSet != lastBoundDescriptorSet) {
-                    vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                    vkCmdBindDescriptorSets(frameinfo.commandbuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                         pipelineLayout_, 0, 1, &currentDescriptorSet, 0, nullptr);
                     lastBoundDescriptorSet = currentDescriptorSet;
                 }
-                
-                // Push constant now only contains object index (matrices are in storage buffer)
-                SimplePushConstantData push_data{};
-                push_data.objectIndex = static_cast<uint32_t>(object_index);
 
-                vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_, 
-                                    VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-                                    0, sizeof(SimplePushConstantData), &push_data);
+                const auto& model = objects[object_index].model_;
+                uint32_t submeshCount = model->getSubmeshCount();
 
-                objects[object_index].model_ -> bind(frameinfo.commandbuffer_);
-                objects[object_index].model_ -> draw(frameinfo.commandbuffer_);
+                if (submeshCount > 0) {
+                    for (uint32_t submeshIdx = 0; submeshIdx < submeshCount; ++submeshIdx) {
+                        const auto& submeshes = model->getSubmeshes();
+                        if (submeshIdx < submeshes.size()) {
+                            const auto& submesh = submeshes[submeshIdx];
+                            SimplePushConstantData push_data{};
+                            push_data.objectIndex = object_index;
+                            push_data.materialIndex = submesh.materialIndex;
+                            vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_,
+                                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                0, sizeof(SimplePushConstantData), &push_data);
+                            model->bind(frameinfo.commandbuffer_);
+                            model->drawSubmesh(frameinfo.commandbuffer_, submeshIdx);
+                        }
+                    }
+                } else {
+                    SimplePushConstantData push_data{};
+                    push_data.objectIndex = object_index;
+                    push_data.materialIndex = 0;
+                    vkCmdPushConstants (frameinfo.commandbuffer_, pipelineLayout_,
+                                        VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                        0, sizeof(SimplePushConstantData), &push_data);
+                    model->bind(frameinfo.commandbuffer_);
+                    model->draw(frameinfo.commandbuffer_);
+                }
             }
 #endif
         }
@@ -282,7 +284,8 @@ struct ThreadSafeFrameData {
 
     void RenderSystem::recordSecondaryCommands(VkCommandBuffer secondaryBuffer, VkRenderPass renderPass,
                                                 const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
-                                                size_t startIndex, size_t endIndex)
+                                                size_t startIndex, size_t endIndex,
+                                                const std::vector<uint32_t>* visibleIndices)
     {
         // Safety checks
         if (secondaryBuffer == VK_NULL_HANDLE) {
@@ -321,29 +324,28 @@ struct ThreadSafeFrameData {
 
         pipeline_->bind(secondaryBuffer);
 
-        // Record commands for objects in this range
-        for (size_t object_index = startIndex; object_index < endIndex && object_index < objects.size(); object_index++) {
-            // Safety checks
-            if (object_index >= frameinfo.globaldescriptorsets_.size()) {
-                continue;  // Skip if out of bounds
-            }
-            if (!objects[object_index].model_) {
-                continue;  // Skip if model is null
+        const size_t rangeCount = endIndex - startIndex;
+        for (size_t r = 0; r < rangeCount; r++) {
+            const uint32_t object_index = visibleIndices
+                ? (*visibleIndices)[startIndex + r]
+                : static_cast<uint32_t>(startIndex + r);
+            if (object_index >= frameinfo.globaldescriptorsets_.size() || !objects[object_index].model_) {
+                continue;
             }
 
-            // Push constant now only contains object index (matrices are in storage buffer)
             SimplePushConstantData push_data{};
-            push_data.objectIndex = static_cast<uint32_t>(object_index);
+            push_data.objectIndex = object_index;
+            push_data.materialIndex = 0;
 
 #ifdef USE_MESH_SHADING
             vkCmdPushConstants(secondaryBuffer, pipelineLayout_,
                               VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
                               0, sizeof(SimplePushConstantData), &push_data);
-
             vkCmdBindDescriptorSets(secondaryBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
-
-            uint32_t meshletCount = objects[object_index].model_->getMeshletCount();
+            uint32_t meshletCount = (frameinfo.visibleMeshletCounts_ && object_index < frameinfo.visibleMeshletCounts_->size())
+                ? (*frameinfo.visibleMeshletCounts_)[object_index]
+                : objects[object_index].model_->getMeshletCount();
             if (meshletCount > 0) {
                 vkCmdDrawMeshTasksEXT_(secondaryBuffer, meshletCount, 1, 1);
             }
@@ -351,10 +353,8 @@ struct ThreadSafeFrameData {
             vkCmdPushConstants(secondaryBuffer, pipelineLayout_,
                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                               0, sizeof(SimplePushConstantData), &push_data);
-
             vkCmdBindDescriptorSets(secondaryBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipelineLayout_, 0, 1, &frameinfo.globaldescriptorsets_[object_index], 0, nullptr);
-
             objects[object_index].model_->bind(secondaryBuffer);
             objects[object_index].model_->draw(secondaryBuffer);
 #endif
@@ -371,6 +371,7 @@ struct ThreadSafeFrameData {
         VkCommandBuffer secondaryBuffer, VkRenderPass renderPass,
         const ThreadSafeFrameData& threadData, const std::vector<VKObject::Object>& objects,
         size_t startIndex, size_t endIndex,
+        const std::vector<uint32_t>* visibleIndices,
         VKPipeline::Pipeline* pipeline, VkPipelineLayout pipelineLayout
 #ifdef USE_MESH_SHADING
         , PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXT
@@ -387,11 +388,9 @@ struct ThreadSafeFrameData {
         if (threadData.framebuffer == VK_NULL_HANDLE) {
             throw std::runtime_error("Framebuffer is null in recordSecondaryCommandsThreadSafe!");
         }
-        if (startIndex >= objects.size()) {
-            return;  // Nothing to record
-        }
-        if (endIndex < startIndex) {
-            return;  // Invalid range
+        const size_t rangeCount = endIndex > startIndex ? endIndex - startIndex : 0;
+        if (rangeCount == 0) {
+            return;
         }
 
         VkCommandBufferInheritanceInfo inheritanceInfo{};
@@ -414,37 +413,29 @@ struct ThreadSafeFrameData {
 
         pipeline->bind(secondaryBuffer);
 
-        // Record commands for objects in this range
-        for (size_t object_index = startIndex; object_index < endIndex && object_index < objects.size(); object_index++) {
-            // Safety checks - validate all accesses before using
-            if (object_index >= threadData.descriptorSets.size()) {
-                continue;  // Skip if out of bounds
+        for (size_t r = 0; r < rangeCount; r++) {
+            const uint32_t object_index = visibleIndices
+                ? (*visibleIndices)[startIndex + r]
+                : static_cast<uint32_t>(startIndex + r);
+            if (object_index >= threadData.descriptorSets.size() || !objects[object_index].model_) {
+                continue;
             }
-            if (!objects[object_index].model_) {
-                continue;  // Skip if model is null
-            }
-            
-            // Additional thread-safety check: verify model pointer is still valid
-            // (shared_ptr ensures object won't be deleted while in use, but we check anyway)
             const auto& model = objects[object_index].model_;
-            if (!model) {
-                continue;  // Double-check model is still valid
-            }
+            if (!model) continue;
 
-            // Push constant now only contains object index (matrices are in storage buffer)
             SimplePushConstantData push_data{};
-            push_data.objectIndex = static_cast<uint32_t>(object_index);
+            push_data.objectIndex = object_index;
+            push_data.materialIndex = 0;
 
 #ifdef USE_MESH_SHADING
             vkCmdPushConstants(secondaryBuffer, pipelineLayout,
                               VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_FRAGMENT_BIT,
                               0, sizeof(SimplePushConstantData), &push_data);
-
             vkCmdBindDescriptorSets(secondaryBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipelineLayout, 0, 1, &threadData.descriptorSets[object_index], 0, nullptr);
-
-            // Thread-safe: getMeshletCount() is const and only reads data
-            uint32_t meshletCount = model->getMeshletCount();
+            uint32_t meshletCount = (threadData.visibleMeshletCounts && object_index < threadData.visibleMeshletCounts->size())
+                ? (*threadData.visibleMeshletCounts)[object_index]
+                : model->getMeshletCount();
             if (meshletCount > 0) {
                 vkCmdDrawMeshTasksEXT(secondaryBuffer, meshletCount, 1, 1);
             }
@@ -452,11 +443,8 @@ struct ThreadSafeFrameData {
             vkCmdPushConstants(secondaryBuffer, pipelineLayout,
                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                               0, sizeof(SimplePushConstantData), &push_data);
-
             vkCmdBindDescriptorSets(secondaryBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   pipelineLayout, 0, 1, &threadData.descriptorSets[object_index], 0, nullptr);
-
-            // Thread-safe: bind() and draw() are now const and only read from buffers
             model->bind(secondaryBuffer);
             model->draw(secondaryBuffer);
 #endif
@@ -467,18 +455,17 @@ struct ThreadSafeFrameData {
         }
     }
 
-    void RenderSystem::recordSecondaryCommandBuffers(const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects)
+    void RenderSystem::recordSecondaryCommandBuffers(const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
+                                                     const std::vector<uint32_t>* visibleIndices)
     {
-        if (!useParallelRecording_ || threadCommandResources_.empty() || objects.size() == 0) {
+        const size_t countToRecord = visibleIndices ? visibleIndices->size() : objects.size();
+        if (!useParallelRecording_ || threadCommandResources_.empty() || countToRecord == 0) {
             return;
         }
 
-        // Safety checks
         if (frameinfo.framebuffer_ == VK_NULL_HANDLE) {
             throw std::runtime_error("Framebuffer is null in recordSecondaryCommandBuffers!");
         }
-        
-        // Additional validation for thread safety
         if (threadCommandResources_.size() != numThreads_) {
             throw std::runtime_error("Thread command resources size mismatch!");
         }
@@ -486,8 +473,6 @@ struct ThreadSafeFrameData {
             throw std::runtime_error("Objects and descriptor sets size mismatch!");
         }
 
-        // Create thread-safe copies of necessary data BEFORE starting threads
-        // This ensures all threads have safe access to data without race conditions
         std::vector<VkDescriptorSet> descriptorSetsCopy = frameinfo.globaldescriptorsets_;
         std::vector<PrecomputedMatrices> matricesCopy;
         if (frameinfo.precomputedMatrices_) {
@@ -495,56 +480,51 @@ struct ThreadSafeFrameData {
         }
         VkFramebuffer framebuffer = frameinfo.framebuffer_;
         VkRenderPass renderPass = renderPass_;
-        size_t objectsSize = objects.size();
-
-        size_t objectsPerThread = (objects.size() + numThreads_ - 1) / numThreads_;
-        std::vector<std::thread> recordThreads;
         uint32_t frameIndex = frameinfo.frameindex_;
 
-        // Record secondary command buffers in parallel
-        // Use pointers to objects and copies of frameinfo data for thread safety
+        size_t objectsPerThread = (countToRecord + numThreads_ - 1) / numThreads_;
+        std::vector<std::thread> recordThreads;
+
         for (size_t threadId = 0; threadId < numThreads_ && threadId < threadCommandResources_.size(); threadId++) {
             size_t startIdx = threadId * objectsPerThread;
-            size_t endIdx = std::min(startIdx + objectsPerThread, objects.size());
-            
-            if (startIdx < objects.size()) {
-                // Capture by value for thread safety - use copies and const pointer to objects
-                // Objects vector is guaranteed to not change during recording (it's const reference)
-                const std::vector<VKObject::Object>* objectsPtr = &objects;
-                VKPipeline::Pipeline* pipelinePtr = pipeline_.get();
-                VkPipelineLayout pipelineLayoutVal = pipelineLayout_;
+            size_t endIdx = std::min(startIdx + objectsPerThread, countToRecord);
+            if (startIdx >= countToRecord) break;
+
+            const std::vector<VKObject::Object>* objectsPtr = &objects;
+            const std::vector<uint32_t>* visiblePtr = visibleIndices;
+            VKPipeline::Pipeline* pipelinePtr = pipeline_.get();
+            VkPipelineLayout pipelineLayoutVal = pipelineLayout_;
+            ThreadCommandResources* threadResPtr = &threadCommandResources_[threadId];
 #ifdef USE_MESH_SHADING
-                PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXTVal = vkCmdDrawMeshTasksEXT_;
+            PFN_vkCmdDrawMeshTasksEXT vkCmdDrawMeshTasksEXTVal = vkCmdDrawMeshTasksEXT_;
+            std::vector<uint32_t>* visibleMeshletCountsPtr = frameinfo.visibleMeshletCounts_;
 #endif
-                // Capture thread resources pointer before lambda for thread safety
-                ThreadCommandResources* threadResPtr = &threadCommandResources_[threadId];
-                recordThreads.emplace_back([startIdx, endIdx, frameIndex, 
-                                          descriptorSetsCopy, matricesCopy, framebuffer, renderPass,
-                                          objectsPtr, pipelinePtr, pipelineLayoutVal, threadResPtr
+            recordThreads.emplace_back([startIdx, endIdx, frameIndex,
+                                      descriptorSetsCopy, matricesCopy, framebuffer, renderPass,
+                                      objectsPtr, visiblePtr, pipelinePtr, pipelineLayoutVal, threadResPtr
 #ifdef USE_MESH_SHADING
-                                          , vkCmdDrawMeshTasksEXTVal
+                                      , vkCmdDrawMeshTasksEXTVal, visibleMeshletCountsPtr
 #endif
-                                          ]() {
-                    if (frameIndex < threadResPtr->secondaryBuffers.size()) {
-                        VkCommandBuffer secondaryBuffer = threadResPtr->secondaryBuffers[frameIndex];
-                        
-                        // Create thread-safe frame data structure
-                        ThreadSafeFrameData threadData;
-                        threadData.descriptorSets = descriptorSetsCopy;
-                        threadData.precomputedMatrices = matricesCopy;
-                        threadData.framebuffer = framebuffer;
-                        threadData.hasPrecomputedMatrices = !matricesCopy.empty();
-                        
-                        recordSecondaryCommandsThreadSafe(secondaryBuffer, renderPass, threadData, 
-                                                         *objectsPtr, startIdx, endIdx,
-                                                         pipelinePtr, pipelineLayoutVal
+                                      ]() {
+                if (frameIndex < threadResPtr->secondaryBuffers.size()) {
+                    VkCommandBuffer secondaryBuffer = threadResPtr->secondaryBuffers[frameIndex];
+                    ThreadSafeFrameData threadData;
+                    threadData.descriptorSets = descriptorSetsCopy;
+                    threadData.precomputedMatrices = matricesCopy;
+                    threadData.framebuffer = framebuffer;
+                    threadData.hasPrecomputedMatrices = !matricesCopy.empty();
 #ifdef USE_MESH_SHADING
-                                                         , vkCmdDrawMeshTasksEXTVal
+                    threadData.visibleMeshletCounts = visibleMeshletCountsPtr;
 #endif
-                                                         );
-                    }
-                });
-            }
+                    recordSecondaryCommandsThreadSafe(secondaryBuffer, renderPass, threadData,
+                                                     *objectsPtr, startIdx, endIdx, visiblePtr,
+                                                     pipelinePtr, pipelineLayoutVal
+#ifdef USE_MESH_SHADING
+                                                     , vkCmdDrawMeshTasksEXTVal
+#endif
+                                                     );
+                }
+            });
         }
 
         // Wait for all threads to finish recording

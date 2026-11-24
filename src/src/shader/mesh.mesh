@@ -7,16 +7,22 @@ layout(triangles, max_vertices = 64, max_primitives = 124) out;
 
 layout(location = 0) out vec3 fragColor[];
 layout(location = 1) out vec2 fragTexCoord[];
+layout(location = 2) out vec3 fragSpecularColor[];
+layout(location = 3) out float fragShininess[];
+layout(location = 4) out float fragDissolve[];
+
+const uint UBO_LIGHT_COUNT = 2u;
 
 layout(set = 0, binding = 0) uniform GlobalUbo {
     mat4 projectionViewMatrix;
-    vec3     directionToLight;
+    vec4 lights[UBO_LIGHT_COUNT];  // xyz = direction, w = intensity
 } ubo;
 
-// Push constant now only contains object index (matrices are in storage buffer)
+// Push constant contains object index and material index
 layout(push_constant) uniform Push {
     uint objectIndex;
-    uint padding[3];  // Padding to align to 16 bytes
+    uint materialIndex;
+    uint padding[2];  // Padding to align to 16 bytes
 } push;
 
 // Meshlet structure matching meshopt_Meshlet
@@ -54,6 +60,25 @@ struct ObjectMatrices {
 
 layout(std430, set = 0, binding = 6) readonly buffer ObjectMatricesBuffer {
     ObjectMatrices matrices[];
+};
+
+// Material structure
+struct Material {
+    vec3 diffuseColor;
+    vec3 specularColor;
+    float shininess;
+    float dissolve;
+};
+
+// Materials storage buffer
+layout(std430, set = 0, binding = 7) readonly buffer MaterialsBuffer {
+    Material materials[];
+};
+
+// Visible meshlet indices for meshlet culling (layout: count at [0], then indices)
+layout(std430, set = 0, binding = 8) readonly buffer VisibleMeshletIndicesBuffer {
+    uint visibleCount;
+    uint indices[];
 };
 
 // Vertex data structure for internal use
@@ -108,7 +133,8 @@ Vertex readVertex(uint vertexIndex) {
 const float AMBIENT = 0.3;
 
 void main() {
-    uint meshletIndex = gl_WorkGroupID.x;
+    // Meshlet culling: gl_WorkGroupID.x is the index into the visible list; indices[] gives the actual meshlet index
+    uint meshletIndex = indices[gl_WorkGroupID.x];
     
     // Get thread ID within the workgroup (0-31)
     uint threadID = gl_LocalInvocationID.x;
@@ -166,11 +192,23 @@ void main() {
         
         gl_MeshVerticesEXT[i].gl_Position = ubo.projectionViewMatrix * objectMatrices.modelMatrix * vec4(position, 1.0);
         
+        // Get material
+        Material material = materials[push.materialIndex];
+        
+        // Use material diffuse color if vertex color is white (default), otherwise use vertex color
+        vec3 finalColor = (color == vec3(1.0)) ? material.diffuseColor : color * material.diffuseColor;
+        
         vec3 normalWorldSpace = normalize(normalMatrix3 * normal);
-        float lightIntensity = AMBIENT + max(dot(normalWorldSpace, ubo.directionToLight), 0.0);
+        float lightIntensity = AMBIENT;
+        for (uint j = 0u; j < UBO_LIGHT_COUNT; j++) {
+            lightIntensity += ubo.lights[j].w * max(dot(normalWorldSpace, ubo.lights[j].xyz), 0.0);
+        }
 
-        fragColor[i] = lightIntensity * color;
+        fragColor[i] = lightIntensity * finalColor;
         fragTexCoord[i] = uv;
+        fragSpecularColor[i] = material.specularColor;
+        fragShininess[i] = material.shininess;
+        fragDissolve[i] = material.dissolve;
     }
     
     // PARALLEL TRIANGLE PROCESSING: Each thread processes triangles with stride

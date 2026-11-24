@@ -38,6 +38,10 @@ struct FrameInfo
     std::vector<PrecomputedMatrices>* precomputedMatrices_ = nullptr;  // Optional precomputed matrices
     VKProfiler::Profiler* profiler_ = nullptr;  // Optional profiler for GPU timing
     VkFramebuffer framebuffer_ = VK_NULL_HANDLE;  // Framebuffer for secondary command buffers
+#ifdef USE_MESH_SHADING
+    /** Per-object visible meshlet count (size = objects.size()). If null, full meshlet count is used. */
+    std::vector<uint32_t>* visibleMeshletCounts_ = nullptr;
+#endif
 };
 
 class RenderSystem 
@@ -69,10 +73,13 @@ public:
     RenderSystem(const RenderSystem &) = delete;
     RenderSystem &operator=(const RenderSystem &) = delete;
 
-    void renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &Objects);
+    /** If visibleIndices is non-null, only objects at those indices are rendered (frustum culling). */
+    void renderObjects(FrameInfo& frameinfo, std::vector<VKObject::Object> &objects,
+                      const std::vector<uint32_t>* visibleIndices = nullptr);
     void enableParallelRecording(bool enable = true);
     bool isParallelRecordingEnabled() const { return useParallelRecording_; }
-    void recordSecondaryCommandBuffers(const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects);
+    void recordSecondaryCommandBuffers(const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
+                                       const std::vector<uint32_t>* visibleIndices = nullptr);
     void executeSecondaryCommandBuffers(const FrameInfo& frameinfo, size_t objectCount);
 
 private:
@@ -80,9 +87,10 @@ private:
     void createPipeline(VkRenderPass renderPass);
     void createThreadCommandPools();
     void destroyThreadCommandPools();
-    void recordSecondaryCommands(VkCommandBuffer secondaryBuffer, VkRenderPass renderPass, 
+    void recordSecondaryCommands(VkCommandBuffer secondaryBuffer, VkRenderPass renderPass,
                                   const FrameInfo& frameinfo, const std::vector<VKObject::Object>& objects,
-                                  size_t startIndex, size_t endIndex);
+                                  size_t startIndex, size_t endIndex,
+                                  const std::vector<uint32_t>* visibleIndices = nullptr);
 };
 
 }  // namespace lve

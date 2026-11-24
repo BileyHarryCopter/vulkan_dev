@@ -1,7 +1,8 @@
 #pragma once
 
-#include <iostream>
+#include <cstdint>
 #include <chrono>
+#include <iostream>
 
 #include "window.hpp"
 #include "instance.hpp"
@@ -12,14 +13,22 @@
 #include "keyboard_controller.hpp"
 #include "buffmanager.hpp"
 #include "descriptors.hpp"
+#include "lod.hpp"
 
 namespace VKEngine
 {
 
+constexpr uint32_t GLOBAL_UBO_LIGHT_COUNT = 2u;
+
 struct GlobalUbo
 {
-    glm::mat4 projectionViewMatrix {1.f};
-    glm::vec3 directionToLight = glm::normalize(glm::vec3{0.5, -1.0, 0.5});
+    glm::mat4 projectionViewMatrix{1.f};
+    // xyz = normalized direction to light, w = intensity
+    glm::vec4 lights[GLOBAL_UBO_LIGHT_COUNT] = {
+        // Two top-down directional lights only.
+        glm::vec4(glm::normalize(glm::vec3(0.20f, -1.0f, 0.15f)), 1.10f),
+        glm::vec4(glm::normalize(glm::vec3(-0.15f, -1.0f, -0.20f)), 0.75f),
+    };
 };
 
 // Structure to track which objects belong to which segment
@@ -43,6 +52,21 @@ class App final
     
     // Storage buffer for object matrices (shared across all objects)
     std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>> objectMatricesBuffers_;
+    
+    // Storage buffer for materials (shared across all objects)
+    std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>> materialsBuffers_;
+    std::vector<VKModel::Material> allMaterials_;  // All materials from all models
+
+#ifdef USE_MESH_SHADING
+    // Per-frame, per-object: buffer of visible meshlet indices (layout: count at [0], then indices). Used for meshlet culling.
+    std::vector<std::vector<std::unique_ptr<VKBuffmanager::Buffmanager>>> visibleMeshletBuffers_;
+    std::vector<uint32_t> visibleMeshletCounts_;  // size = objects_.size(), filled each frame
+    // Per-object runtime LOD level history (for hysteresis and temporal stability).
+    std::vector<uint32_t> runtimeLodLevels_;
+#endif
+
+    // Integration checkpoint for LoD rollout (phase-based stop-and-verify).
+    VKLod::RuntimeSettings lodSettings_{};
 
 public:
     App() : 
@@ -54,16 +78,16 @@ public:
         loadObjects();
 
 #ifdef USE_MESH_SHADING
-        // For mesh shading: UBO, textures, storage buffers for meshlets, and object matrices
+        // For mesh shading: UBO, textures, storage buffers for meshlets, object matrices, and materials
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size())
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() * 4 + 1)).build();  // 4 storage buffers per object + 1 for object matrices
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() * 5 + 2)).build();  // 5 per object (meshlets + visible list) + object matrices + materials
 #else
         globalPool = VKDescriptors::DescriptorPool::Builder(device_).setMaxSets (VKSwapchain::MAX_FRAMES_IN_FLIGHT * (objects_.size() + 1))  //  max count of descriptor SETS which can be allocated in the future 
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT)  //  add number of descriptors of certain type in pool
                                                                     .addPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * objects_.size())
-                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT).build();  // 1 storage buffer for object matrices
+                                                                    .addPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VKSwapchain::MAX_FRAMES_IN_FLIGHT * 2).build();  // 2 storage buffers: object matrices + materials
 #endif
     }
     ~App()= default;

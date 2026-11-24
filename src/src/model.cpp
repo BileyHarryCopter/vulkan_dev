@@ -12,8 +12,12 @@
 #include <glm/gtx/hash.hpp>
 
 #include <cassert>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <unordered_map>
 
 namespace std
@@ -52,6 +56,10 @@ namespace VKModel
         createVertexBuffer    (builder.vertices);
         createIndexBuffer     (builder.indices);
         
+        // Store materials and submeshes
+        materials_ = builder.materials;
+        submeshes_ = builder.submeshes;
+        
 #ifdef USE_MESH_SHADING
         // Build meshlets for mesh shading
         if (!builder.indices.empty() && !builder.vertices.empty())
@@ -60,6 +68,17 @@ namespace VKModel
             createMeshletBuffers();
         }
 #endif
+
+        // Compute AABB in model space for frustum culling
+        if (!builder.vertices.empty())
+        {
+            aabbMin_ = aabbMax_ = builder.vertices[0].position;
+            for (const auto& v : builder.vertices)
+            {
+                aabbMin_ = glm::min(aabbMin_, v.position);
+                aabbMax_ = glm::max(aabbMax_, v.position);
+            }
+        }
     }
 
     Model::~Model()
@@ -86,6 +105,286 @@ namespace VKModel
         builder.load_models(filepath_to_model);
 
         return std::make_unique<Model> (device, builder);
+    }
+
+    std::unique_ptr<Model> Model::createModelFromLodCache(VKDevice::Device& device, const std::string& lodCachePath,
+                                                           const std::string& filepath_to_texture)
+    {
+        struct LevelBlobHeader
+        {
+            uint32_t vertexCount = 0;
+            uint32_t indexCount = 0;
+            uint32_t meshletCount = 0;
+            uint32_t meshletVertexCount = 0;
+            uint32_t meshletTriangleCount = 0;
+        };
+
+        std::ifstream in(lodCachePath, std::ios::binary);
+        if (!in.is_open())
+        {
+            throw std::runtime_error("Failed to open LOD cache file: " + lodCachePath);
+        }
+
+        VKLod::FileHeader header{};
+        in.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!in.good())
+        {
+            throw std::runtime_error("Failed to read LOD cache header: " + lodCachePath);
+        }
+        if (header.magic != VKLod::VKLOD_MAGIC)
+        {
+            throw std::runtime_error("Invalid LOD cache magic in file: " + lodCachePath);
+        }
+        if (header.version != VKLod::VKLOD_VERSION)
+        {
+            throw std::runtime_error("Unsupported LOD cache version in file: " + lodCachePath);
+        }
+        if (header.levelCount == 0)
+        {
+            throw std::runtime_error("LOD cache has no levels: " + lodCachePath);
+        }
+
+        std::vector<VKLod::LodLevel> levels(header.levelCount);
+        in.seekg(static_cast<std::streamoff>(header.levelsOffset), std::ios::beg);
+        in.read(reinterpret_cast<char*>(levels.data()),
+                static_cast<std::streamsize>(sizeof(VKLod::LodLevel) * levels.size()));
+        if (!in.good())
+        {
+            throw std::runtime_error("Failed to read LOD levels from: " + lodCachePath);
+        }
+
+        std::vector<VKLod::LodGroup> groups(header.groupCount);
+        if (header.groupCount > 0) {
+            in.seekg(static_cast<std::streamoff>(header.groupsOffset), std::ios::beg);
+            in.read(reinterpret_cast<char*>(groups.data()),
+                    static_cast<std::streamsize>(sizeof(VKLod::LodGroup) * groups.size()));
+            if (!in.good()) throw std::runtime_error("Failed to read LOD groups from: " + lodCachePath);
+        }
+
+        std::vector<VKLod::LodNode> nodes(header.nodeCount);
+        if (header.nodeCount > 0) {
+            in.seekg(static_cast<std::streamoff>(header.nodesOffset), std::ios::beg);
+            in.read(reinterpret_cast<char*>(nodes.data()),
+                    static_cast<std::streamsize>(sizeof(VKLod::LodNode) * nodes.size()));
+            if (!in.good()) throw std::runtime_error("Failed to read LOD nodes from: " + lodCachePath);
+        }
+
+        std::vector<uint32_t> groupMeshletIndices;
+        if (header.groupMeshletIndicesOffset < header.blobsOffset) {
+            const uint64_t bytes = header.blobsOffset - header.groupMeshletIndicesOffset;
+            groupMeshletIndices.resize(static_cast<size_t>(bytes / sizeof(uint32_t)));
+            in.seekg(static_cast<std::streamoff>(header.groupMeshletIndicesOffset), std::ios::beg);
+            in.read(reinterpret_cast<char*>(groupMeshletIndices.data()),
+                    static_cast<std::streamsize>(groupMeshletIndices.size() * sizeof(uint32_t)));
+            if (!in.good()) throw std::runtime_error("Failed to read LOD group meshlet indices from: " + lodCachePath);
+        }
+
+        Builder builder{};
+        builder.filepath_to_texture = filepath_to_texture;
+        builder.materials.clear();
+        builder.submeshes.clear();
+        uint32_t mergedMeshletCountForLog = 0;
+
+#ifdef USE_MESH_SHADING
+        std::vector<meshopt_Meshlet> mergedMeshlets;
+        std::vector<uint32_t> mergedMeshletVertices;
+        std::vector<uint32_t> mergedMeshletTriangles;
+#endif
+        std::vector<uint32_t> levelMeshletBase(levels.size(), 0);
+
+        for (size_t li = 0; li < levels.size(); li++)
+        {
+            const auto& level = levels[li];
+            const uint64_t blobOffsetAbs = header.blobsOffset + level.blobOffset;
+            in.seekg(static_cast<std::streamoff>(blobOffsetAbs), std::ios::beg);
+
+            LevelBlobHeader blobHeader{};
+            in.read(reinterpret_cast<char*>(&blobHeader), sizeof(blobHeader));
+            if (!in.good())
+            {
+                throw std::runtime_error("Failed to read LOD blob header from: " + lodCachePath);
+            }
+            if (blobHeader.vertexCount == 0 || blobHeader.indexCount == 0)
+            {
+                throw std::runtime_error("LOD blob has no geometry: " + lodCachePath);
+            }
+
+            std::vector<std::array<float, 3>> positions(blobHeader.vertexCount);
+            std::vector<uint32_t> indices(blobHeader.indexCount);
+            in.read(reinterpret_cast<char*>(positions.data()),
+                    static_cast<std::streamsize>(sizeof(std::array<float, 3>) * positions.size()));
+            in.read(reinterpret_cast<char*>(indices.data()),
+                    static_cast<std::streamsize>(sizeof(uint32_t) * indices.size()));
+            if (!in.good())
+            {
+                throw std::runtime_error("Failed to read LOD geometry payload from: " + lodCachePath);
+            }
+
+            const uint32_t vertexBase = static_cast<uint32_t>(builder.vertices.size());
+            std::vector<glm::vec3> normals(positions.size(), glm::vec3(0.f));
+            for (size_t i = 0; i + 2 < indices.size(); i += 3)
+            {
+                const uint32_t i0 = indices[i + 0];
+                const uint32_t i1 = indices[i + 1];
+                const uint32_t i2 = indices[i + 2];
+                if (i0 >= positions.size() || i1 >= positions.size() || i2 >= positions.size()) continue;
+                const glm::vec3 p0(positions[i0][0], positions[i0][1], positions[i0][2]);
+                const glm::vec3 p1(positions[i1][0], positions[i1][1], positions[i1][2]);
+                const glm::vec3 p2(positions[i2][0], positions[i2][1], positions[i2][2]);
+                const glm::vec3 n = glm::cross(p1 - p0, p2 - p0);
+                if (glm::dot(n, n) > 1e-20f)
+                {
+                    normals[i0] += n;
+                    normals[i1] += n;
+                    normals[i2] += n;
+                }
+            }
+
+            builder.vertices.reserve(builder.vertices.size() + positions.size());
+            for (size_t i = 0; i < positions.size(); i++)
+            {
+                Vertex v{};
+                v.position = glm::vec3(positions[i][0], positions[i][1], positions[i][2]);
+                v.color = glm::vec3(1.f);
+                v.uv = glm::vec2(0.f);
+                if (glm::dot(normals[i], normals[i]) > 1e-20f) v.normal = glm::normalize(normals[i]);
+                else v.normal = glm::vec3(0.f, 1.f, 0.f);
+                builder.vertices.push_back(v);
+            }
+
+            if (li == 0)
+            {
+                builder.indices = indices;
+            }
+
+#ifdef USE_MESH_SHADING
+            std::vector<meshopt_Meshlet> blobMeshlets(blobHeader.meshletCount);
+            std::vector<uint32_t> blobMeshletVertices(blobHeader.meshletVertexCount);
+            std::vector<uint32_t> blobMeshletTriangles(blobHeader.meshletTriangleCount);
+            if (!blobMeshlets.empty())
+            {
+                in.read(reinterpret_cast<char*>(blobMeshlets.data()),
+                        static_cast<std::streamsize>(sizeof(meshopt_Meshlet) * blobMeshlets.size()));
+            }
+            if (!blobMeshletVertices.empty())
+            {
+                in.read(reinterpret_cast<char*>(blobMeshletVertices.data()),
+                        static_cast<std::streamsize>(sizeof(uint32_t) * blobMeshletVertices.size()));
+            }
+            if (!blobMeshletTriangles.empty())
+            {
+                in.read(reinterpret_cast<char*>(blobMeshletTriangles.data()),
+                        static_cast<std::streamsize>(sizeof(uint32_t) * blobMeshletTriangles.size()));
+            }
+            if (!in.good())
+            {
+                throw std::runtime_error("Failed to read LOD meshlet payload from: " + lodCachePath);
+            }
+
+            levelMeshletBase[li] = static_cast<uint32_t>(mergedMeshlets.size());
+            const uint32_t meshletVertexBase = static_cast<uint32_t>(mergedMeshletVertices.size());
+            const uint32_t meshletTriangleBase = static_cast<uint32_t>(mergedMeshletTriangles.size());
+
+            for (auto m : blobMeshlets)
+            {
+                m.vertex_offset += meshletVertexBase;
+                m.triangle_offset += meshletTriangleBase;
+                mergedMeshlets.push_back(m);
+            }
+            mergedMeshletVertices.reserve(mergedMeshletVertices.size() + blobMeshletVertices.size());
+            for (uint32_t idx : blobMeshletVertices)
+            {
+                mergedMeshletVertices.push_back(idx + vertexBase);
+            }
+            mergedMeshletTriangles.insert(mergedMeshletTriangles.end(), blobMeshletTriangles.begin(), blobMeshletTriangles.end());
+#endif
+        }
+
+        // Minimal material/submesh setup for compatibility with existing pipeline.
+        builder.materials.emplace_back();
+        Submesh s{};
+        s.indexOffset = 0;
+        s.indexCount = static_cast<uint32_t>(builder.indices.size());
+        s.materialIndex = 0;
+        builder.submeshes.push_back(s);
+
+        auto model = std::make_unique<Model>(device, builder);
+
+#ifdef USE_MESH_SHADING
+        if (!mergedMeshlets.empty())
+        {
+            // Keep offline-baked meshlet order exactly as in cache for every LOD level.
+            model->meshlet_data_.meshlets = std::move(mergedMeshlets);
+            model->meshlet_data_.meshlet_vertices = std::move(mergedMeshletVertices);
+            model->meshlet_data_.meshlet_triangles = std::move(mergedMeshletTriangles);
+            model->meshlet_data_.meshlet_count = static_cast<uint32_t>(model->meshlet_data_.meshlets.size());
+            mergedMeshletCountForLog = model->meshlet_data_.meshlet_count;
+            model->meshlet_data_.meshlet_aabb_min.resize(model->meshlet_data_.meshlet_count);
+            model->meshlet_data_.meshlet_aabb_max.resize(model->meshlet_data_.meshlet_count);
+
+            for (size_t mi = 0; mi < model->meshlet_data_.meshlets.size(); ++mi)
+            {
+                const auto& m = model->meshlet_data_.meshlets[mi];
+                glm::vec3 lo(std::numeric_limits<float>::max());
+                glm::vec3 hi(std::numeric_limits<float>::lowest());
+                for (uint32_t v = 0; v < m.vertex_count; ++v)
+                {
+                    const uint32_t local = m.vertex_offset + v;
+                    if (local >= model->meshlet_data_.meshlet_vertices.size()) continue;
+                    const uint32_t idx = model->meshlet_data_.meshlet_vertices[local];
+                    if (idx >= builder.vertices.size()) continue;
+                    const glm::vec3 p = builder.vertices[idx].position;
+                    lo = glm::min(lo, p);
+                    hi = glm::max(hi, p);
+                }
+                model->meshlet_data_.meshlet_aabb_min[mi] = lo;
+                model->meshlet_data_.meshlet_aabb_max[mi] = hi;
+            }
+
+            // Re-upload GPU buffers with baked meshlet content.
+            model->createMeshletBuffers();
+        }
+#endif
+
+        model->lodInfo_.available = true;
+        model->lodInfo_.version = header.version;
+        model->lodInfo_.levelCount = header.levelCount;
+        model->lodInfo_.groupCount = header.groupCount;
+        model->lodInfo_.nodeCount = header.nodeCount;
+        model->lodInfo_.sourcePath = lodCachePath;
+
+        model->lodLevels_ = levels;
+        model->lodGroups_ = groups;
+        model->lodNodes_ = nodes;
+        model->lodGroupMeshletIndices_ = groupMeshletIndices;
+        model->lodRootNode_ = levels.empty() ? 0u : levels[0].rootNode;
+
+        // Remap group meshlet ids to merged global meshlet index space.
+        for (size_t li = 0; li < levels.size(); li++)
+        {
+            const auto& level = levels[li];
+            if (level.groupOffset + level.groupCount > model->lodGroups_.size()) continue;
+            const uint32_t meshletBase = (li < levelMeshletBase.size()) ? levelMeshletBase[li] : 0u;
+            for (uint32_t g = 0; g < level.groupCount; g++)
+            {
+                const auto& group = model->lodGroups_[level.groupOffset + g];
+                const uint32_t begin = group.meshletOffset;
+                const uint32_t end = begin + group.meshletCount;
+                if (end > model->lodGroupMeshletIndices_.size()) continue;
+                for (uint32_t i = begin; i < end; i++)
+                {
+                    model->lodGroupMeshletIndices_[i] += meshletBase;
+                }
+            }
+        }
+
+        std::cout << "Loaded LOD cache: " << lodCachePath
+                  << " (levels=" << model->lodLevels_.size()
+                  << ", mergedVertices=" << builder.vertices.size()
+                  << ", mergedMeshlets=" << mergedMeshletCountForLog
+                  << ", groups=" << model->lodGroups_.size()
+                  << ", nodes=" << model->lodNodes_.size() << ")" << std::endl;
+        return model;
     }
 
     void Model::createTextureImage(const std::string& filepath)
@@ -267,6 +566,19 @@ namespace VKModel
             vkCmdDraw(commandbuffer, vertexcount_, 1, 0, 0);    //  put here some constants
     }
 
+    void Model::drawSubmesh(VkCommandBuffer commandbuffer, uint32_t submeshIndex) const
+    {
+        if (submeshIndex >= submeshes_.size())
+            return;
+            
+        const auto& submesh = submeshes_[submeshIndex];
+        
+        if (hasindexbuffer)
+            vkCmdDrawIndexed(commandbuffer, submesh.indexCount, 1, submesh.indexOffset, 0, 0);
+        else
+            vkCmdDraw(commandbuffer, submesh.indexCount, 1, submesh.indexOffset, 0);
+    }
+
     void Model::bind(VkCommandBuffer commandbuffer) const
     {
         VkBuffer buffers[] = {vertexbuff_->getBuffer()};
@@ -304,68 +616,167 @@ namespace VKModel
         std::vector<tinyobj::material_t> materials;
         std::string warn, err;
 
+        // Extract directory path for MTL file loading
+        std::string mtlBaseDir = filepath_to_model.substr(0, filepath_to_model.find_last_of("/\\") + 1);
+
         //  parsing of the obj file
-        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath_to_model.c_str()))
+        if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, filepath_to_model.c_str(), mtlBaseDir.c_str()))
             throw std::runtime_error(warn + err);
 
         vertices.clear();
         indices.clear();
+        this->materials.clear();
+        submeshes.clear();
 
+        // Convert tinyobj materials to our Material structure
+        for (const auto& mat : materials)
+        {
+            Material material;
+            material.diffuseColor = glm::vec3(mat.diffuse[0], mat.diffuse[1], mat.diffuse[2]);
+            material.specularColor = glm::vec3(mat.specular[0], mat.specular[1], mat.specular[2]);
+            material.shininess = static_cast<float>(mat.shininess);
+            material.dissolve = static_cast<float>(mat.dissolve);
+            this->materials.push_back(material);
+        }
+
+        // If no materials, create a default one
+        if (this->materials.empty())
+        {
+            Material defaultMaterial;
+            this->materials.push_back(defaultMaterial);
+        }
 
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
+        
+        // Process each shape and create submeshes based on materials
         for (const auto &shape : shapes)
         {
-            for (const auto& index : shape.mesh.indices)
+            uint32_t currentMaterialId = 0;  // Default to first material
+            uint32_t submeshStartIndex = static_cast<uint32_t>(indices.size());
+            
+            // Process indices and track material changes
+            for (size_t faceIdx = 0; faceIdx < shape.mesh.num_face_vertices.size(); ++faceIdx)
             {
-                Vertex vertex{};
-
-                auto vertex_index = index.vertex_index;
-                if (vertex_index >= 0)
+                // Get material ID for this face
+                int materialId = -1;
+                if (faceIdx < shape.mesh.material_ids.size())
                 {
-                    vertex.position = {
-                        attrib.vertices[3 * vertex_index + 0],
-                        attrib.vertices[3 * vertex_index + 1],
-                        attrib.vertices[3 * vertex_index + 2]
-                    };
-
-                    if (attrib.colors.size() > 0 && vertex_index * 3 + 2 < attrib.colors.size()) {
-                        vertex.color = {
-                            attrib.colors[3 * vertex_index + 0],
-                            attrib.colors[3 * vertex_index + 1],
-                            attrib.colors[3 * vertex_index + 2]
-                        };
-                    } else {
-                        vertex.color = {1.0f, 1.0f, 1.0f};
+                    materialId = shape.mesh.material_ids[faceIdx];
+                }
+                
+                // Clamp material ID to valid range
+                uint32_t validMaterialId = 0;
+                if (materialId >= 0 && materialId < static_cast<int>(this->materials.size()))
+                {
+                    validMaterialId = static_cast<uint32_t>(materialId);
+                }
+                
+                // If material changed, create a new submesh
+                if (faceIdx > 0 && validMaterialId != currentMaterialId)
+                {
+                    // Finish current submesh
+                    if (indices.size() > submeshStartIndex)
+                    {
+                        Submesh submesh;
+                        submesh.indexOffset = submeshStartIndex;
+                        submesh.indexCount = static_cast<uint32_t>(indices.size() - submeshStartIndex);
+                        submesh.materialIndex = currentMaterialId;
+                        submeshes.push_back(submesh);
                     }
+                    
+                    // Start new submesh
+                    submeshStartIndex = static_cast<uint32_t>(indices.size());
+                    currentMaterialId = validMaterialId;
                 }
-
-                auto normal_index = index.normal_index;
-                if (normal_index >= 0)
+                else if (faceIdx == 0)
                 {
-                    vertex.normal = {
-                        attrib.normals[3 * normal_index + 0],
-                        attrib.normals[3 * normal_index + 1],
-                        attrib.normals[3 * normal_index + 2]
-                    };
+                    currentMaterialId = validMaterialId;
                 }
-
-                auto texcoord_index = index.texcoord_index;
-                if (texcoord_index >= 0)
+                
+                // Process vertices for this face
+                int numVertices = shape.mesh.num_face_vertices[faceIdx];
+                
+                // Calculate index offset for this face (indices are stored sequentially)
+                size_t indexOffset = 0;
+                for (size_t i = 0; i < faceIdx; ++i)
                 {
-                    vertex.uv = {
-                        attrib.texcoords[2 * texcoord_index + 0],
-                        1.0f - attrib.texcoords[2 * texcoord_index + 1],
-                    };
+                    indexOffset += shape.mesh.num_face_vertices[i];
                 }
-
-
-                if (uniqueVertices.count(vertex) == 0)
+                
+                for (int v = 0; v < numVertices; ++v)
                 {
-                    uniqueVertices[vertex] = static_cast<uint32_t> (vertices.size());
-                    vertices.push_back(vertex);
+                    const auto& index = shape.mesh.indices[indexOffset + v];
+                    Vertex vertex{};
+
+                    auto vertex_index = index.vertex_index;
+                    if (vertex_index >= 0)
+                    {
+                        vertex.position = {
+                            attrib.vertices[3 * vertex_index + 0],
+                            attrib.vertices[3 * vertex_index + 1],
+                            attrib.vertices[3 * vertex_index + 2]
+                        };
+
+                        // Use vertex color if available, otherwise use material diffuse color
+                        if (attrib.colors.size() > 0 && vertex_index * 3 + 2 < attrib.colors.size()) {
+                            vertex.color = {
+                                attrib.colors[3 * vertex_index + 0],
+                                attrib.colors[3 * vertex_index + 1],
+                                attrib.colors[3 * vertex_index + 2]
+                            };
+                        } else {
+                            // Use material diffuse color
+                            vertex.color = this->materials[validMaterialId].diffuseColor;
+                        }
+                    }
+
+                    auto normal_index = index.normal_index;
+                    if (normal_index >= 0)
+                    {
+                        vertex.normal = {
+                            attrib.normals[3 * normal_index + 0],
+                            attrib.normals[3 * normal_index + 1],
+                            attrib.normals[3 * normal_index + 2]
+                        };
+                    }
+
+                    auto texcoord_index = index.texcoord_index;
+                    if (texcoord_index >= 0)
+                    {
+                        vertex.uv = {
+                            attrib.texcoords[2 * texcoord_index + 0],
+                            1.0f - attrib.texcoords[2 * texcoord_index + 1],
+                        };
+                    }
+
+                    if (uniqueVertices.count(vertex) == 0)
+                    {
+                        uniqueVertices[vertex] = static_cast<uint32_t> (vertices.size());
+                        vertices.push_back(vertex);
+                    }
+                    indices.push_back(uniqueVertices[vertex]);
                 }
-                indices.push_back(uniqueVertices[vertex]);
             }
+            
+            // Finish last submesh for this shape
+            if (indices.size() > submeshStartIndex)
+            {
+                Submesh submesh;
+                submesh.indexOffset = submeshStartIndex;
+                submesh.indexCount = static_cast<uint32_t>(indices.size() - submeshStartIndex);
+                submesh.materialIndex = currentMaterialId;
+                submeshes.push_back(submesh);
+            }
+        }
+        
+        // If no submeshes were created (no materials in file), create one for entire model
+        if (submeshes.empty() && !indices.empty())
+        {
+            Submesh submesh;
+            submesh.indexOffset = 0;
+            submesh.indexCount = static_cast<uint32_t>(indices.size());
+            submesh.materialIndex = 0;
+            submeshes.push_back(submesh);
         }
         
         // Explicitly clear intermediate data to free memory immediately
@@ -477,6 +888,24 @@ namespace VKModel
         }
         
         meshlet_data_.meshlet_count = static_cast<uint32_t>(meshlet_count);
+
+        // Per-meshlet AABB in model space (for meshlet frustum culling)
+        meshlet_data_.meshlet_aabb_min.resize(meshlet_count);
+        meshlet_data_.meshlet_aabb_max.resize(meshlet_count);
+        for (size_t i = 0; i < meshlet_count; ++i) {
+            const auto& m = meshlet_data_.meshlets[i];
+            glm::vec3 lo(1e30f), hi(-1e30f);
+            for (uint32_t v = 0; v < m.vertex_count; ++v) {
+                uint32_t globalIdx = meshlet_data_.meshlet_vertices[m.vertex_offset + v];
+                if (globalIdx < vertices.size()) {
+                    const glm::vec3& p = vertices[globalIdx].position;
+                    lo = glm::min(lo, p);
+                    hi = glm::max(hi, p);
+                }
+            }
+            meshlet_data_.meshlet_aabb_min[i] = lo;
+            meshlet_data_.meshlet_aabb_max[i] = hi;
+        }
         
         // Debug output
         std::cout << "Built " << meshlet_data_.meshlet_count << " meshlets using meshoptimizer from " 
@@ -538,10 +967,18 @@ namespace VKModel
         }
         
         // Explicitly clear temporary buffers to free memory immediately
-        // temp_meshlets, temp_meshlet_vertices, temp_meshlet_triangles were already moved to meshlet_data_
-        // but vertex_positions can be cleared
         vertex_positions.clear();
         vertex_positions.shrink_to_fit();
+    }
+
+    void Model::getMeshletAABB(uint32_t i, glm::vec3& outMin, glm::vec3& outMax) const
+    {
+        if (i >= meshlet_data_.meshlet_count || meshlet_data_.meshlet_aabb_min.empty()) {
+            outMin = outMax = glm::vec3(0.f);
+            return;
+        }
+        outMin = meshlet_data_.meshlet_aabb_min[i];
+        outMax = meshlet_data_.meshlet_aabb_max[i];
     }
 
     void Model::createMeshletBuffers()

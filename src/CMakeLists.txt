@@ -85,11 +85,15 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/shader.vert
     VERBATIM)
 
-# Compile mesh shader if USE_MESH_SHADING is enabled
+# Compile mesh shader if USE_MESH_SHADING is enabled (need Vulkan 1.3 / SPIR-V 1.6 for mesh shader)
 if(USE_MESH_SHADING)
+    set(GLSLC_MESH_FLAGS ${GLSLC_FLAGS})
+    if("${GLSLC_FLAGS}" STREQUAL "")
+        set(GLSLC_MESH_FLAGS "--target-env=vulkan1.3")
+    endif()
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.spv
-        COMMAND ${GLSLC} ${GLSLC_FLAGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.mesh -o ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.spv
+        COMMAND ${GLSLC} ${GLSLC_MESH_FLAGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.mesh -o ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.spv
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/shader/mesh.mesh
         VERBATIM)
     add_custom_command(
